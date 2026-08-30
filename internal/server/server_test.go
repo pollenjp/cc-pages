@@ -111,15 +111,17 @@ func TestListEmptyState(t *testing.T) {
 
 func TestCSPHeader(t *testing.T) {
 	_, h, _ := fixture(t)
+	// CSP はこのプロジェクトが正確な値を拘束している数少ない制約なので、
+	// server.CSP 定数ではなく独立したリテラルと比較する。定数同士の比較だと
+	// server.go 側で CSP を緩めてもテストが追従してしまい、検出できない。
+	const wantCSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
 	got := get(t, h, "/").Header().Get("Content-Security-Policy")
-	if got != CSP {
-		t.Errorf("CSP = %q, want %q", got, CSP)
+	if got != wantCSP {
+		t.Errorf("CSP = %q, want %q", got, wantCSP)
 	}
-	if !strings.Contains(CSP, "default-src 'self'") {
-		t.Errorf("CSP に default-src 'self' が無い: %q", CSP)
-	}
-	if strings.Contains(CSP, "script-src") {
-		t.Errorf("script-src を開けてはいけない: %q", CSP)
+	// フラグメントに <script> を書けない設計の担保。実際に返ったヘッダで検証する。
+	if strings.Contains(got, "script-src") {
+		t.Errorf("script-src を開けてはいけない: %q", got)
 	}
 }
 
@@ -141,12 +143,33 @@ func TestTemplatesNotServedAsAssets(t *testing.T) {
 	}
 }
 
-func TestTouchCallsRefresh(t *testing.T) {
+// TestTouchReturnsNoContentWithoutAccept は cc-pages new からの呼び出しを想定する。
+// Accept ヘッダが無いリクエストには 204 を返す。
+func TestTouchReturnsNoContentWithoutAccept(t *testing.T) {
 	_, h, calls := fixture(t)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/_/touch", nil))
-	if rec.Code != http.StatusSeeOther && rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d", rec.Code)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if *calls != 1 {
+		t.Errorf("refresh が呼ばれた回数 = %d, want 1", *calls)
+	}
+}
+
+// TestTouchRedirectsForBrowser はブラウザの「再読み込み」フォーム送信を想定する。
+// Accept ヘッダがあるリクエストには一覧へのリダイレクトを返す。
+func TestTouchRedirectsForBrowser(t *testing.T) {
+	_, h, calls := fixture(t)
+	req := httptest.NewRequest(http.MethodPost, "/_/touch", nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	if got := rec.Header().Get("Location"); got != "/" {
+		t.Errorf("Location = %q, want %q", got, "/")
 	}
 	if *calls != 1 {
 		t.Errorf("refresh が呼ばれた回数 = %d, want 1", *calls)
