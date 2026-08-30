@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/pollenjp/cc-pages/internal/config"
 	"github.com/pollenjp/cc-pages/internal/index"
 	"github.com/pollenjp/cc-pages/internal/store"
+	"github.com/pollenjp/cc-pages/internal/transcript"
 )
 
 func at(h int) time.Time { return time.Date(2026, 8, 29, h, 0, 0, 0, time.UTC) }
@@ -191,6 +193,52 @@ func TestHumanBytes(t *testing.T) {
 	for _, c := range cases {
 		if got := humanBytes(c.in); got != c.want {
 			t.Errorf("humanBytes(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestDisplayedTimesShareOneZone は、同じ瞬間を別のロケーションで持つ 2 つの値が
+// 同じ壁時計で表示されることを確認する。
+//
+// セッションの LastSeen は jsonl 由来だと RFC3339 の "...Z" つまり UTC で、
+// ページの CreatedAt は time.Now() 由来なので +09:00 のような現地オフセットを持つ。
+// time.Format は値のロケーションのまま出すため、揃えないとセッションのヘッダと
+// その直下のページ行に同じ瞬間が 9 時間ずれて並ぶ。
+//
+// 機械の TZ に依存しないよう、ページ側は固定オフセットのゾーンで作る。
+func TestDisplayedTimesShareOneZone(t *testing.T) {
+	jst := time.FixedZone("JST", 9*3600)
+	instant := time.Date(2026, 8, 29, 13, 30, 0, 0, time.UTC)
+
+	ix := index.New()
+	ix.Replace(map[string]store.SessionEntry{
+		"20260829-aaaa": {
+			DirName: "20260829-aaaa", DirPath: "/root/sessions/20260829-aaaa",
+			// session.json の LastSeen は jsonl 由来のものより古い。索引は新しい方を採る。
+			Session: store.Session{SessionID: "sa", Dir: "20260829-aaaa", LastSeen: at(1)},
+			Pages: []store.PageEntry{{
+				DirName: "0001-x", DirPath: "/root/sessions/20260829-aaaa/0001-x",
+				// LastSeen と同じ瞬間を、UTC ではないゾーンで持つ。
+				Page: store.Page{ID: "0001", Title: "ページ", CreatedAt: instant.In(jst)},
+			}},
+		},
+	}, map[string]transcript.Meta{"sa": {SessionID: "sa", LastSeen: instant}})
+
+	s := New(config.Config{Addr: "127.0.0.1:7777", Root: "/root"}, ix, func() {})
+	body := get(t, s.Handler(), "/p/20260829-aaaa/").Body.String()
+
+	// 出るのはヘッダの "2006-01-02 15:04" とページ行の "15:04" の 2 つだけ。
+	got := regexp.MustCompile(`\d\d:\d\d`).FindAllString(body, -1)
+	if len(got) != 2 {
+		t.Fatalf("時刻が 2 つ出るはず: %v\n%s", got, body)
+	}
+	if got[0] != got[1] {
+		t.Errorf("ヘッダ %q とページ行 %q で同じ瞬間の表示がずれている", got[0], got[1])
+	}
+	want := instant.Local().Format("15:04")
+	for _, g := range got {
+		if g != want {
+			t.Errorf("表示時刻 = %q, want %q (ローカルタイムに揃える)", g, want)
 		}
 	}
 }

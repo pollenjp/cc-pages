@@ -74,6 +74,13 @@ func (ix *Index) Replace(entries map[string]store.SessionEntry, meta map[string]
 }
 
 // buildView は 1 セッション分のビューを組み立てる。
+//
+// 表示に出る時刻はここでローカルタイムに揃える。素材の由来がばらばらだからで、
+// page.json の created_at は time.Now() 由来なので現地のオフセット (+09:00 など)
+// を持つ一方、jsonl の timestamp は RFC3339 の "...Z" なので UTC になる。
+// time.Format は値が持つロケーションのまま出すので、揃えないと同じ瞬間が
+// セッションのヘッダとその直下のページ行とで 9 時間ずれて表示される。
+// テンプレート側に .Local を撒くのではなく、索引を作るこの 1 箇所で正規化する。
 func buildView(e store.SessionEntry, m transcript.Meta) SessionView {
 	v := SessionView{
 		DirName:   e.DirName,
@@ -81,13 +88,13 @@ func buildView(e store.SessionEntry, m transcript.Meta) SessionView {
 		GitBranch: e.Session.GitBranch,
 		PageCount: len(e.Pages),
 		Bytes:     e.Bytes,
-		LastSeen:  e.Session.LastSeen,
+		LastSeen:  e.Session.LastSeen.Local(),
 	}
 	for _, p := range e.Pages {
 		v.Pages = append(v.Pages, PageView{
 			DirName: p.DirName, ID: p.Page.ID, Title: p.Page.Title,
 			Summary: p.Page.Summary, Prompt: p.Page.Prompt, Tags: p.Page.Tags,
-			CreatedAt: p.Page.CreatedAt, Mode: p.Page.Mode, DirPath: p.DirPath,
+			CreatedAt: p.Page.CreatedAt.Local(), Mode: p.Page.Mode, DirPath: p.DirPath,
 		})
 	}
 	// jsonl 由来のメタが取れていればそちらを優先する。
@@ -101,7 +108,7 @@ func buildView(e store.SessionEntry, m transcript.Meta) SessionView {
 		v.GitBranch = m.GitBranch
 	}
 	if m.LastSeen.After(v.LastSeen) {
-		v.LastSeen = m.LastSeen
+		v.LastSeen = m.LastSeen.Local()
 	}
 	if v.Title == "" && len(v.Pages) > 0 {
 		v.Title = v.Pages[0].Title
