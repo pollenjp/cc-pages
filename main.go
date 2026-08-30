@@ -100,6 +100,14 @@ func cmdServe(cfg config.Config, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// time.NewTicker は d <= 0 で panic する契約になっている。Run はこの後
+	// goroutine の中で呼ぶので、ここで弾かないと --rescan 0 のような
+	// ありふれた誤指定でプロセス全体が生のスタックトレースで落ちる。
+	// os.UserHomeDir や bind より前に確認することで、ネットワークにも
+	// ディスクにも触らずに検証できる。
+	if *every <= 0 {
+		return fmt.Errorf("--rescan は正の値でなければならない: %v", *every)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -122,7 +130,17 @@ func cmdServe(cfg config.Config, args []string) error {
 		Handler:           server.New(cfg, ix, r.Refresh).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	// done は shutdown goroutine が Shutdown まで完了したら閉じる。
+	//
+	// Shutdown を呼ぶと ListenAndServe は即座に ErrServerClosed を返す
+	// (net/http.Server.Shutdown のドキュメントが明示的に警告している罠:
+	// "Make sure the program doesn't exit and waits instead for Shutdown
+	// to return")。ここで <-done を待たずに return すると、最大 5 秒の
+	// ドレインが終わる前にプロセスが終了し、実行中の Shutdown goroutine を
+	// 道連れにしてしまう。
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -131,7 +149,15 @@ func cmdServe(cfg config.Config, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "cc-pages: %s で待ち受けます (root=%s)\n", cfg.BaseURL(), cfg.Root)
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		// ポート衝突などの実エラー。ctx はまだキャンセルされておらず、shutdown
+		// goroutine は <-ctx.Done() で止まったままなので、ここで <-done を
+		// 待つと永久にハングする。待たずに return する。
 		return err
 	}
+	// 不変条件: ここに来るのは ErrServerClosed が返ったとき、つまり
+	// Shutdown が既に呼ばれたときだけ。だから shutdown goroutine は必ず
+	// 進行しており <-done は必ず閉じる。この行を上の早期 return より前に
+	// 動かすと、ポート衝突のたびにハングするので注意。
+	<-done
 	return nil
 }
