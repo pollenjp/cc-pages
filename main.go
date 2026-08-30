@@ -126,8 +126,9 @@ func cmdServe(cfg config.Config, args []string) error {
 	go r.Run(ctx, *every)
 
 	srv := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           server.New(cfg, ix, r.Refresh).Handler(),
+		Addr: cfg.Addr,
+		// touch (cc-pages new / 再読み込みボタン) は差分ではなく全走査。
+		Handler:           server.New(cfg, ix, r.RefreshAll).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	// done は shutdown goroutine が Shutdown まで完了したら閉じる。

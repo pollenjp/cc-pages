@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"sync"
 	"time"
 
@@ -34,15 +35,33 @@ func NewRefresher(sessionsDir, projectsDir string, ix *index.Index) *Refresher {
 	}
 }
 
-// Refresh は 1 回走査して索引を差し替える。
+// Refresh は前回の結果を使い回しつつ 1 回走査して索引を差し替える。
+// 定期走査 (Run) 用。
+func (r *Refresher) Refresh() { r.scan(false) }
+
+// RefreshAll は前回の結果を捨てて全部読み直す。
+//
+// POST /_/touch — cc-pages new からの通知と、一覧の「再読み込み」ボタン — 用。
+// 差分判定は mtime を見るだけなので、mtime を動かさない変更 (既存ファイルの
+// 上書きなど) は原理的に取りこぼす。「定期 stat を待たずに走査できる」という
+// 再読み込みボタンの約束を守るには、その経路だけは無条件に読み直す必要がある。
+func (r *Refresher) RefreshAll() { r.scan(true) }
+
+// scan は 1 回走査して索引を差し替える。
 //
 // 走査に失敗しても panic せず、前回の索引をそのまま残す。
-func (r *Refresher) Refresh() {
+func (r *Refresher) scan(full bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	entries, err := store.Scan(r.sessionsDir, r.prev)
+	prev := r.prev
+	if full {
+		prev = nil
+	}
+	entries, err := store.Scan(r.sessionsDir, prev)
 	if err != nil {
+		// 黙って戻ると「一覧が更新されない」以外に何の手がかりも残らない。
+		log.Printf("cc-pages: 走査に失敗した (前回の索引を残す): %v", err)
 		return
 	}
 	r.prev = entries

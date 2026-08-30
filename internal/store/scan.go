@@ -21,13 +21,25 @@ type SessionEntry struct {
 	DirPath string
 	Pages   []PageEntry // 連番の昇順
 	ModTime time.Time   // セッションディレクトリの mtime。差分判定に使う
-	Bytes   int64       // 配下の合計サイズ
+
+	// PageModTime は配下のページディレクトリの mtime の最大値。差分判定に使う。
+	//
+	// セッションディレクトリの mtime はページの追加・削除でしか動かない。
+	// skill は cc-pages new が戻った後にページディレクトリへ index.html を書くので、
+	// こちらも見ないとその本文が永久に読み直されない。
+	PageModTime time.Time
+
+	// Bytes は配下のページディレクトリの合計サイズ。session.json は含まない。
+	Bytes int64
 }
 
 // Scan は sessionsDir を走査する。
 //
-// prev を渡すと、ディレクトリの mtime が変わっていないセッションは読み直さず
-// prev の結果を使い回す。ファイル監視 (inotify) を持たずに更新を拾うための仕組み。
+// prev を渡すと、mtime が変わっていないセッションは読み直さず prev の結果を
+// 使い回す。ファイル監視 (inotify) を持たずに更新を拾うための仕組み。
+// 見るのはセッションディレクトリと、その直下のページディレクトリの mtime の
+// 両方。ページディレクトリを stat するだけならページ 1 枚の page.json を読み直す
+// より安いので、「変わっていないセッションは読み直さない」という狙いは保てる。
 // sessionsDir が存在しない場合は空の結果を返し、エラーにしない。
 // 壊れた page.json は黙って飛ばす。ページ 1 枚のために一覧全体を落とさない。
 func Scan(sessionsDir string, prev map[string]SessionEntry) (map[string]SessionEntry, error) {
@@ -49,7 +61,8 @@ func Scan(sessionsDir string, prev map[string]SessionEntry) (map[string]SessionE
 		if err != nil {
 			continue
 		}
-		if old, ok := prev[e.Name()]; ok && old.ModTime.Equal(fi.ModTime()) {
+		if old, ok := prev[e.Name()]; ok && old.ModTime.Equal(fi.ModTime()) &&
+			!maxPageModTime(dirPath).After(old.PageModTime) {
 			out[e.Name()] = old
 			continue
 		}
@@ -75,6 +88,11 @@ func readSession(dirPath, dirName string, modTime time.Time) SessionEntry {
 	for _, e := range ents {
 		if !e.IsDir() {
 			continue
+		}
+		// mtime は中身を読む前に採る。読んだ後に採ると、読んでいる最中に入った
+		// 変更まで「見たことにして」次回の読み直しを取りこぼす。
+		if fi, err := e.Info(); err == nil && fi.ModTime().After(entry.PageModTime) {
+			entry.PageModTime = fi.ModTime()
 		}
 		pagePath := filepath.Join(dirPath, e.Name())
 		p, err := ReadPage(pagePath)
@@ -108,6 +126,25 @@ func readSession(dirPath, dirName string, modTime time.Time) SessionEntry {
 		}
 	}
 	return entry
+}
+
+// maxPageModTime はセッション直下のページディレクトリの mtime の最大値を返す。
+// 読めなければゼロ値を返し、使い回しを妨げない。
+func maxPageModTime(dir string) time.Time {
+	var newest time.Time
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return newest
+	}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		if fi, err := e.Info(); err == nil && fi.ModTime().After(newest) {
+			newest = fi.ModTime()
+		}
+	}
+	return newest
 }
 
 // dirBytes はディレクトリ配下の合計サイズを返す。読めないものは 0 扱い。

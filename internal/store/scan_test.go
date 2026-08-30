@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -152,5 +153,61 @@ func TestScanDropsRemovedSession(t *testing.T) {
 	}
 	if len(second) != 0 {
 		t.Errorf("消したセッションが残っている: %d", len(second))
+	}
+}
+
+// only は 1 件だけのはずの走査結果を取り出す。
+func only(t *testing.T, m map[string]SessionEntry) SessionEntry {
+	t.Helper()
+	if len(m) != 1 {
+		t.Fatalf("セッション数 = %d, want 1", len(m))
+	}
+	for _, e := range m {
+		return e
+	}
+	return SessionEntry{}
+}
+
+// TestScanPicksUpIndexHTMLWrittenAfterScan は、セッションディレクトリの mtime が
+// 動かない変更が拾われることを確認する。
+//
+// skill は cc-pages new が戻った後にページディレクトリへ index.html を書く。
+// これが動かすのはページディレクトリの mtime だけで、セッションディレクトリの
+// mtime は変わらない。セッションディレクトリだけを見て使い回していると、
+// 一番新しいページの本文は永久に集計されず、1 ページのセッション (このツールで
+// 想定される形) のサイズが数百バイトのまま止まる。
+func TestScanPicksUpIndexHTMLWrittenAfterScan(t *testing.T) {
+	root := t.TempDir()
+	res, err := CreatePage(root, "http://localhost:7777", fixedTime(), NewPageInput{
+		SessionID: "sess-aaaa", Title: "T",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionsDir := filepath.Join(root, "sessions")
+
+	// cc-pages new が戻った直後の走査。本文はまだ無い。
+	first, err := Scan(sessionsDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := only(t, first).Bytes
+
+	// skill が本文を書く。セッションディレクトリの mtime は動かない。
+	body := strings.Repeat("x", 4096)
+	if err := os.WriteFile(filepath.Join(res.Dir, "index.html"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := Scan(sessionsDir, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := only(t, second).Bytes
+	if after <= before {
+		t.Errorf("Bytes = %d, want > %d (後から書かれた index.html が数えられていない)", after, before)
+	}
+	if after-before < int64(len(body)) {
+		t.Errorf("Bytes の増分 = %d, want >= %d", after-before, len(body))
 	}
 }

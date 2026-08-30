@@ -30,7 +30,11 @@ type Server struct {
 	pageTmpl    *template.Template
 }
 
-// New はサーバを組み立てる。refresh は索引を作り直す関数。
+// New はサーバを組み立てる。
+//
+// refresh は POST /_/touch から呼ぶ、索引を強制的に全部読み直す関数
+// (Refresher.RefreshAll)。差分走査を渡すと「再読み込み」ボタンが
+// 定期走査と同じ取りこぼしを共有してしまい、押しても直らなくなる。
 func New(cfg config.Config, ix *index.Index, refresh func()) *Server {
 	return &Server{
 		cfg:         cfg,
