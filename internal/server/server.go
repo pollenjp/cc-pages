@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 
 	"github.com/pollenjp/cc-pages/internal/config"
@@ -178,17 +179,44 @@ func sessionURL(sessionDir string) string {
 
 // handleAsset はページディレクトリの assets/ を配信する。
 //
-// http.Dir 越しに配信するので、assets/ の外には出られない。
+// 以前は http.StripPrefix に prefix ("/p/"+session+"/"+page+"/assets/") を
+// 文字列結合で渡していた。session/page は r.PathValue から取るのでデコード済み
+// (日本語ならその文字自体) だが、StripPrefix はその prefix を r.URL.Path
+// (デコード済み) からだけでなく、r.URL.RawPath が空でないときは
+// r.URL.EscapedPath() (リクエストされた生のエンコードのまま) からも同じ文字列で
+// 剥がそうとする。RawPath は「リクエストされた生のエンコードが、デコード後の値を
+// 正準にパーセントエンコードし直した形とバイト単位で一致しない」ときにだけ立つ
+// フィールドで、これは url.PathEscape が出す大文字 %XX 以外 — 実ブラウザが
+// アドレスバーで使う小文字 %xx など — でリクエストされた瞬間に起きる。
+// その形だけ EscapedPath() 側の剥がしに失敗し、StripPrefix はハンドラを素通し
+// せず 404 を返していた (ページ本体は開けるのに、そのページの画像だけ死ぬ実バグ)。
+//
+// ルートの {path...} は既に assets/ の中身をデコード済みで切り出しており、
+// prefix を文字列で再構築する必要はそもそも無い。fs.FS を assets/ に根付かせ、
+// その値をそのまま渡して開けば、リクエストがどうエンコードされて来たかに
+// 依存しなくなる。「StripPrefix + http.Dir の方が単純に見える」と元の文字列
+// 結合へ戻さないこと — それがこの関数を壊した張本人。
+//
+// assets/ の外へ出られないことは http.ServeFileFS 自身が保証する: name
+// (r.PathValue("path")) を fs.FS 越しに開く前に r.URL.Path に ".." 要素が
+// 無いか確認し、あれば 400 で弾く。加えて os.DirFS 自体も fs.ValidPath に
+// 反する名前 (".." を含む等) を拒む。
 func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
-	_, path, ok := s.ix.Page(r.PathValue("session"), r.PathValue("page"))
+	_, dirPath, ok := s.ix.Page(r.PathValue("session"), r.PathValue("page"))
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	http.StripPrefix(
-		"/p/"+r.PathValue("session")+"/"+r.PathValue("page")+"/assets/",
-		http.FileServer(http.Dir(filepath.Join(path, "assets"))),
-	).ServeHTTP(w, r)
+	assets := os.DirFS(filepath.Join(dirPath, "assets"))
+	// {path...} は "assets/" そのもの (末尾スラッシュ、その先が無い) だと空文字を
+	// 返す。io/fs はルート自身を "" ではなく "." で表す契約 (fs.ValidPath("") は
+	// false) なので、ここで変換しないと os.DirFS(...).Open("") がエラーになり、
+	// ディレクトリ一覧を出すつもりの参照が 500 になる。
+	name := r.PathValue("path")
+	if name == "" {
+		name = "."
+	}
+	http.ServeFileFS(w, r, assets, name)
 }
 
 // render はテンプレートをいったんバッファに組み立ててから w に書く。

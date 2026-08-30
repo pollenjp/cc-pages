@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -165,11 +166,85 @@ func TestAssetsServed(t *testing.T) {
 	}
 }
 
+// lowercasePercentEscapes は "%XX" の16進部分だけを小文字化する。
+//
+// url.PathEscape が出すのは常に大文字 %XX だが、実際のブラウザのアドレスバーは
+// 小文字 %xx を使う。期待値をバイト列で決め打ちせず url.PathEscape の出力から
+// 機械的に導くための補助。
+func lowercasePercentEscapes(s string) string {
+	return regexp.MustCompile(`%[0-9A-Fa-f]{2}`).ReplaceAllStringFunc(s, strings.ToLower)
+}
+
+// TestAssetsServedForAnyEncodingForm は、日本語のページディレクトリ配下の asset が、
+// リクエストのパスがどうエンコードされて届いても配信されることを確認する。
+//
+// 実機のブラウザで再現した不具合そのもの: ページ本体 (chrome) は 3 通りの
+// エンコードすべてで 200 が返るのに、assets/ 配下の画像だけは小文字 %xx と
+// 生の UTF-8 で 404 になっていた。旧実装は http.StripPrefix に
+// r.PathValue から組み立てた「デコード済みの」prefix を渡しており、
+// StripPrefix は r.URL.RawPath が空でないとき r.URL.EscapedPath() (エンコードの
+// ままの生の値) からも同じ prefix を剥がそうとする。RawPath は「エンコードされた
+// 形が、デコード後の値を正準にパーセントエンコードし直した形とバイト単位で一致
+// しない」ときにだけ立つフィールドで、それは小文字 %xx や生の UTF-8 で
+// リクエストされた瞬間に起きる。だからその 2 つの形だけ剥がしに失敗し、
+// ハンドラを素通しせず 404 を返していた。
+//
+// 期待値は url.PathEscape の出力から機械的に導き、エンコードの規則そのものを
+// 検証する (ハードコードしたバイト列と比較しない)。
+func TestAssetsServedForAnyEncodingForm(t *testing.T) {
+	const pageDir = "0001-テスト"
+	h := realFixture(t, "<p>x</p>", pageDir)
+
+	upper := url.PathEscape(pageDir) // url.PathEscape は大文字 %XX しか出さない
+	lower := lowercasePercentEscapes(upper)
+
+	forms := []struct {
+		name string
+		enc  string
+	}{
+		{"大文字%XX(url.PathEscapeの出力そのまま、今日も通る)", upper},
+		{"小文字%xx(実ブラウザのアドレスバーがこれ)", lower},
+		{"生のUTF-8(無エンコード)", pageDir},
+	}
+	for _, f := range forms {
+		t.Run(f.name, func(t *testing.T) {
+			rec := get(t, h, "/p/20260829-aaaa/"+f.enc+"/assets/a.txt")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if rec.Body.String() != "あさっと" {
+				t.Errorf("body = %q, want %q", rec.Body.String(), "あさっと")
+			}
+		})
+	}
+}
+
 func TestAssetsCannotEscapeDirectory(t *testing.T) {
 	h := realFixture(t, "<p>x</p>", "0001-alpha")
 	rec := get(t, h, "/p/20260829-aaaa/0001-alpha/assets/../page.json")
 	if rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "schema") {
 		t.Errorf("assets の外に出られてしまった: %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAssetsCannotEscapeDirectoryEncoded は TestAssetsCannotEscapeDirectory の
+// パーセントエンコード版。
+//
+// net/http.ServeMux は生の ".." セグメントを含むリクエストを、ハンドラに
+// 届く前に自分でクリーニングしてリダイレクトする (上のテストが実際に検証
+// できているのはこのクリーニングであって、ハンドラ自身の防御ではない)。
+// エスケープした path 要素はルーティング上のセパレータとして扱われない
+// 契約なので、%2e%2e%2F はクリーニング対象にならずハンドラまで届く。
+// ハンドラ自身の防御を確かめるには、この形で送る必要がある。
+//
+// アサーションはステータスコードではなく、page.json の中身
+// (`"schema"`) が本文に出ていないことそのもの。エンコードされた形が
+// 400 になるか 404 になるかは実装の細部で、外から保証すべき契約ではない。
+func TestAssetsCannotEscapeDirectoryEncoded(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha")
+	rec := get(t, h, "/p/20260829-aaaa/0001-alpha/assets/%2e%2e%2Fpage.json")
+	if strings.Contains(rec.Body.String(), "schema") {
+		t.Errorf("assets の外に出られてしまった (encoded ..): %d %q", rec.Code, rec.Body.String())
 	}
 }
 
