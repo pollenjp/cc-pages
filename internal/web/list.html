@@ -1,5 +1,6 @@
 {{define "body"}}
-{{if not .Sessions}}<p class="empty">まだページがありません。</p>{{end}}
+{{if not .Sessions}}{{if .Query}}<p class="empty">「{{.Query}}」に一致するページはありません。</p>
+{{else}}<p class="empty">まだページがありません。</p>{{end}}{{end}}
 {{range $sess := .Sessions}}
 <section class="session">
   <h2><a href="/p/{{$sess.DirName}}/">{{$sess.Title}}</a></h2>

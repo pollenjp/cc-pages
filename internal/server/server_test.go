@@ -242,3 +242,20 @@ func TestDisplayedTimesShareOneZone(t *testing.T) {
 		}
 	}
 }
+
+// TestListSearchMissHasOwnMessage は、検索して 0 件だったときの文言が空状態の
+// ものと分かれていることを確認する。同じ「まだページがありません」を出すと、
+// 絞り込んだだけなのにデータが消えたように読める。
+func TestListSearchMissHasOwnMessage(t *testing.T) {
+	_, h, _ := fixture(t)
+	body := get(t, h, "/?q=zzz-nomatch").Body.String()
+	if strings.Contains(body, "まだページがありません") {
+		t.Errorf("検索 0 件に空状態の文言が出ている: %s", body)
+	}
+	if !strings.Contains(body, "に一致するページはありません") {
+		t.Errorf("検索 0 件の文言が出ていない: %s", body)
+	}
+	if !strings.Contains(body, "zzz-nomatch") {
+		t.Errorf("何で絞り込んだのかが出ていない: %s", body)
+	}
+}

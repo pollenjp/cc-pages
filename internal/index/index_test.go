@@ -80,9 +80,9 @@ func TestSearchMatchesMetaFields(t *testing.T) {
 		want string
 	}{
 		{"notion", "a"},     // タイトル (大文字小文字を無視)
-		{"要約:Slack", "b"},  // 要約
+		{"要約:Slack", "b"},   // 要約
 		{"tag-Notion", "a"}, // タグ
-		{"依頼:Slack", "b"},  // 元プロンプト
+		{"依頼:Slack", "b"},   // 元プロンプト
 	}
 	for _, c := range cases {
 		got := ix.Search(c.q)

@@ -1,6 +1,14 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
+
+// writeFile はテストから使う小さなヘルパ。
+func writeFile(path, content string) error {
+	return os.WriteFile(path, []byte(content), 0o600)
+}
 
 // envFunc はテスト用に環境変数を差し替える。
 func envFunc(m map[string]string) func(string) string {

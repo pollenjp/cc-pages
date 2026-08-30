@@ -24,15 +24,14 @@ type sessionRow struct {
 }
 
 // pageRow はセッション内の 1 ページ。テンプレートに渡す形。
+//
+// 索引の PageView にはこれ以外のフィールド (ID / Tags / Mode / DirPath) も
+// あるが、テンプレートが読むものだけを写す。
 type pageRow struct {
 	DirName   string
-	ID        string
 	Title     string
 	Summary   string
-	Tags      []string
 	CreatedAt time.Time
-	Mode      string
-	DirPath   string
 }
 
 // pageData は全テンプレートに渡す共通の形。
@@ -59,8 +58,8 @@ func toRow(v index.SessionView) sessionRow {
 	}
 	for _, p := range v.Pages {
 		r.Pages = append(r.Pages, pageRow{
-			DirName: p.DirName, ID: p.ID, Title: p.Title, Summary: p.Summary,
-			Tags: p.Tags, CreatedAt: p.CreatedAt, Mode: p.Mode, DirPath: p.DirPath,
+			DirName: p.DirName, Title: p.Title,
+			Summary: p.Summary, CreatedAt: p.CreatedAt,
 		})
 	}
 	return r

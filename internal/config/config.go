@@ -7,7 +7,6 @@ package config
 import (
 	"errors"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -88,8 +87,3 @@ func (c Config) BaseURL() string {
 
 // SessionsDir は root/sessions を返す。
 func (c Config) SessionsDir() string { return filepath.Join(c.Root, "sessions") }
-
-// writeFile はテストから使う小さなヘルパ。
-func writeFile(path, content string) error {
-	return os.WriteFile(path, []byte(content), 0o600)
-}

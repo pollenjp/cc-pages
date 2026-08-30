@@ -12,19 +12,21 @@ const SessionFileName = "session.json"
 
 // Session はセッション単位のメタ。
 //
-// 骨 (Schema / SessionID / Dir / FirstSeen / LastSeen) は CreatePage が書く。
-// AITitle / Cwd / GitBranch / Transcript はインデクサが後から埋める。
+// 書くのは CreatePage だけで、内容は骨 (Schema / SessionID / Dir /
+// FirstSeen / LastSeen) に限る。Cwd / GitBranch は走査時にページから補われる
+// ことがあるが、それもメモリ上の話でファイルには書き戻さない。
+// jsonl 由来のメタ (AI がつけたタイトルなど) は索引を組み立てるときに
+// メモリ上で合流させるだけで、ここには一切永続化しない。jsonl は非公開
+// フォーマットで壊れ得るものなので、それを自分のファイルに焼き付けない。
 // skill はこのファイルに触らない。
 type Session struct {
-	Schema     int       `json:"schema"`
-	SessionID  string    `json:"session_id"`
-	Dir        string    `json:"dir"` // ディレクトリ名のみ (絶対パスではない)
-	FirstSeen  time.Time `json:"first_seen"`
-	LastSeen   time.Time `json:"last_seen"`
-	Cwd        string    `json:"cwd,omitempty"`
-	GitBranch  string    `json:"git_branch,omitempty"`
-	AITitle    string    `json:"ai_title,omitempty"`
-	Transcript string    `json:"transcript,omitempty"`
+	Schema    int       `json:"schema"`
+	SessionID string    `json:"session_id"`
+	Dir       string    `json:"dir"` // ディレクトリ名のみ (絶対パスではない)
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+	Cwd       string    `json:"cwd,omitempty"`
+	GitBranch string    `json:"git_branch,omitempty"`
 }
 
 // ReadSession は dir/session.json を読む。

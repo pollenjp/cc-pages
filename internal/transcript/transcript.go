@@ -96,7 +96,6 @@ var wanted = [][]byte{
 
 // line は jsonl の 1 行のうち、必要なキーだけを受ける形。
 type line struct {
-	Type      string `json:"type"`
 	SessionID string `json:"sessionId"`
 	AITitle   string `json:"aiTitle"`
 	Cwd       string `json:"cwd"`

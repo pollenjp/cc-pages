@@ -1,7 +1,9 @@
 package server
 
 import (
+	"html/template"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -63,11 +65,11 @@ func TestPageRendersFragmentInsideChrome(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		"<!doctype html>",                            // chrome が付いている
+		"<!doctype html>", // chrome が付いている
 		"<link rel=\"stylesheet\" href=\"/_/style.css\">",
-		"<h1>見出し</h1>",                              // フラグメントがエスケープされていない
+		"<h1>見出し</h1>", // フラグメントがエスケープされていない
 		"<div class=\"note\">囲み</div>",
-		"cc-pages",                                   // ナビ
+		"cc-pages", // ナビ
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("出力に %q が無い", want)
@@ -300,5 +302,33 @@ func TestBreadcrumbLinksToSession(t *testing.T) {
 	sess := get(t, h, "/p/20260829-aaaa/").Body.String()
 	if strings.Contains(sess, `<span class="crumb"><a`) {
 		t.Errorf("セッション内一覧でパンくずがリンクになっている: %s", sess)
+	}
+}
+
+// TestRenderWritesNothingOnTemplateFailure は、描画が途中で失敗したときに w へ
+// 部分的な HTML が漏れないことを確認する。
+//
+// w へ直接 ExecuteTemplate すると、Content-Type と 200 を立てた後で失敗した場合に
+// 部分出力が既に書き出されており、続く http.Error はヘッダを差し替えられず壊れた
+// HTML に平文を追記するだけになる。render がいったんバッファに組み立ててから
+// コピーしているのはこのため。unexported なので同じパッケージから直接呼ぶ。
+func TestRenderWritesNothingOnTemplateFailure(t *testing.T) {
+	const partial = "PARTIAL-OUTPUT-MUST-NOT-LEAK"
+	// .Boom は pageData に無いフィールドなので、partial を書き出した後に
+	// 実行時エラーになる。
+	tmpl := template.Must(template.New("layout").Parse(partial + "{{.Boom}}"))
+
+	s := New(config.Config{}, index.New(), func() {})
+	rec := httptest.NewRecorder()
+	s.render(rec, tmpl, pageData{})
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, partial) {
+		t.Errorf("部分出力が漏れている: %q", body)
+	}
+	if ct := rec.Header().Get("Content-Type"); strings.Contains(ct, "text/html") {
+		t.Errorf("Content-Type = %q, 失敗経路で text/html を立ててはいけない", ct)
 	}
 }
