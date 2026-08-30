@@ -80,7 +80,7 @@ func (c Config) BaseURL() string {
 		return "http://" + c.Addr
 	}
 	switch host {
-	case "", "127.0.0.1", "0.0.0.0", "::1", "[::]":
+	case "", "127.0.0.1", "0.0.0.0":
 		host = "localhost"
 	}
 	return "http://" + host + ":" + port

@@ -49,6 +49,25 @@ func TestLoadTOMLUsedWhenEnvAbsent(t *testing.T) {
 	}
 }
 
+func TestLoadEnvBeatsTOML(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/config.toml"
+	if err := writeFile(path, "addr = \"127.0.0.1:8888\"\nroot = \"/srv/pages\"\n"); err != nil {
+		t.Fatal(err)
+	}
+	env := envFunc(map[string]string{
+		"CC_PAGES_ADDR": "127.0.0.1:9999",
+		"CC_PAGES_ROOT": "/tmp/pages",
+	})
+	got, err := Load(env, path, "/home/u")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got.Addr != "127.0.0.1:9999" || got.Root != "/tmp/pages" {
+		t.Errorf("Load() = %+v, want addr 127.0.0.1:9999 root /tmp/pages", got)
+	}
+}
+
 func TestBaseURLUsesLocalhost(t *testing.T) {
 	cases := []struct{ addr, want string }{
 		{"127.0.0.1:7777", "http://localhost:7777"},
