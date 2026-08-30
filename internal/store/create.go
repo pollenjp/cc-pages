@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // NewPageInput は cc-pages new のフラグに対応する。
@@ -34,6 +35,9 @@ type NewPageResult struct {
 func CreatePage(root, baseURL string, now time.Time, in NewPageInput) (NewPageResult, error) {
 	if in.SessionID == "" {
 		return NewPageResult{}, errors.New("session id が空")
+	}
+	if err := validateSessionID(in.SessionID); err != nil {
+		return NewPageResult{}, err
 	}
 	if in.Title == "" {
 		return NewPageResult{}, errors.New("title が空")
@@ -89,12 +93,30 @@ func CreatePage(root, baseURL string, now time.Time, in NewPageInput) (NewPageRe
 	return NewPageResult{
 		ID:  id,
 		Dir: pagePath,
-		// sessionDirName / pageDirName は Slug/SessionDirName/PageDirName が
-		// 数字・ハイフン・Unicode の文字/数字だけに絞っているので、そのまま繋げる。
-		// url.PathEscape は使わない — 非 ASCII を %XX に潰してしまい、日本語タイトルの
-		// URL が読めなくなる。
+		// URL のパス片はどちらも安全な文字種しか含まない:
+		//   - sessionDirName = 日付 (数字) + "-" + SessionID の先頭部分。SessionID 自体は
+		//     validateSessionID が CreatePage の入口で検証済み (文字・数字・"-" のみ)
+		//   - pageDirName    = 連番 (数字) + "-" + Slug(タイトル)。Slug が文字・数字・"-"
+		//     だけに絞っている
+		// だからそのまま連結してよい。url.PathEscape は使わない — 非 ASCII を %XX に
+		// 潰してしまい、日本語タイトルの URL が読めなくなるため。
 		URL: strings.TrimRight(baseURL, "/") + "/p/" + sessionDirName + "/" + pageDirName,
 	}, nil
+}
+
+// validateSessionID は session id の文字種を検証する。
+//
+// 許可するのは文字・数字・"-" だけ (Slug と同じ規則)。ここを絞らないと、
+// "../../../x" のような値が SessionDirName 経由でそのままディレクトリ名や URL に
+// 流れ込み、パストラバーサルや URL の破壊につながる。
+func validateSessionID(sessionID string) error {
+	for _, r := range sessionID {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) || r == '-' {
+			continue
+		}
+		return fmt.Errorf("session id に使えない文字が含まれる (文字・数字・\"-\" のみ許可): %q", sessionID)
+	}
+	return nil
 }
 
 // findOrMakeSessionDir は session id に対応するディレクトリ名を返す。

@@ -210,3 +210,28 @@ func TestNewPageResultIsValidJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestCreatePageRejectsUnsafeSession(t *testing.T) {
+	bad := []string{"../../../x", "a/b", "a#b", "a?b", "a b"}
+	for _, sid := range bad {
+		root := t.TempDir()
+		in := NewPageInput{SessionID: sid, Title: "T"}
+		if _, err := CreatePage(root, "http://localhost:7777", fixedTime(), in); err == nil {
+			t.Errorf("session id %q が通ってしまった", sid)
+		}
+		ents, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatalf("ReadDir(root) error = %v", err)
+		}
+		if len(ents) != 0 {
+			t.Errorf("session id %q は拒否されるべきなのに root にディレクトリが作られた: %v", sid, ents)
+		}
+	}
+
+	// 正常系の対照: 実際の UUID 形状 (文字・数字・"-" のみ) は拒否されない。
+	root := t.TempDir()
+	in := NewPageInput{SessionID: "409bfd08-ade3-44d0-a3f4-56369f828d21", Title: "T"}
+	if _, err := CreatePage(root, "http://localhost:7777", fixedTime(), in); err != nil {
+		t.Errorf("UUID 形状の session id が拒否された: %v", err)
+	}
+}
