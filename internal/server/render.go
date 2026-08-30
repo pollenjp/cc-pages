@@ -3,6 +3,8 @@ package server
 import (
 	"fmt"
 	"html/template"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/pollenjp/cc-pages/internal/index"
@@ -82,4 +84,18 @@ var templateFuncs = template.FuncMap{"humanBytes": humanBytes}
 func parseTemplate(bodyFile string) *template.Template {
 	return template.Must(template.New("layout").Funcs(templateFuncs).
 		ParseFS(web.Templates, "layout.html", bodyFile))
+}
+
+// readFragment はページディレクトリの index.html を読む。
+//
+// フラグメントは信頼された入力 (自分の CC が書いたもの) なので、テンプレートでは
+// エスケープせずそのまま埋める。外部への通信は CSP で止める。
+// cc-pages new の直後はまだ書かれていないので、その場合はプレースホルダを返す。
+// ここで 500 を返すと「作った直後に開いたら壊れている」ことになる。
+func readFragment(dirPath string) template.HTML {
+	b, err := os.ReadFile(filepath.Join(dirPath, "index.html"))
+	if err != nil {
+		return template.HTML(`<p class="empty">このページの内容はまだ書かれていません。</p>`)
+	}
+	return template.HTML(b)
 }

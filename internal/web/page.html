@@ -1,0 +1,9 @@
+{{define "body"}}
+<article>
+{{.Body}}
+</article>
+<nav class="updown meta">
+  {{if .PrevURL}}<a href="{{.PrevURL}}">← 前のページ</a>{{else}}<span></span>{{end}}
+  {{if .NextURL}}<a href="{{.NextURL}}">次のページ →</a>{{end}}
+</nav>
+{{end}}

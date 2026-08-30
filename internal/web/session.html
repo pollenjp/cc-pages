@@ -1,0 +1,16 @@
+{{define "body"}}
+<h1>{{.Session.Title}}</h1>
+<div class="meta">
+  <span>{{.Session.LastSeen.Format "2006-01-02 15:04"}}</span>
+  <span>{{.Session.PageCount}} ページ</span>
+  {{if .Session.GitBranch}}<span>{{.Session.GitBranch}}</span>{{end}}
+  {{if .Session.Cwd}}<span>{{.Session.Cwd}}</span>{{end}}
+</div>
+<ol>
+{{range .Session.Pages}}
+  <li><a href="/p/{{$.Session.DirName}}/{{.DirName}}">{{.Title}}</a>
+    {{if .Summary}}<span class="meta">— {{.Summary}}</span>{{end}}
+    <span class="meta">{{.CreatedAt.Format "15:04"}}</span></li>
+{{end}}
+</ol>
+{{end}}
