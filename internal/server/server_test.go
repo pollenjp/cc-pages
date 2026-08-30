@@ -1,0 +1,261 @@
+package server
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/pollenjp/cc-pages/internal/config"
+	"github.com/pollenjp/cc-pages/internal/index"
+	"github.com/pollenjp/cc-pages/internal/store"
+	"github.com/pollenjp/cc-pages/internal/transcript"
+)
+
+func at(h int) time.Time { return time.Date(2026, 8, 29, h, 0, 0, 0, time.UTC) }
+
+// mkEntry はテスト用の SessionEntry を組み立てる。pageDir は ASCII にする。
+func mkEntry(dir, sid, title, pageDir string, h int) store.SessionEntry {
+	return store.SessionEntry{
+		DirName: dir, DirPath: "/root/sessions/" + dir,
+		Session: store.Session{SessionID: sid, Dir: dir, LastSeen: at(h), GitBranch: "main"},
+		Pages: []store.PageEntry{{
+			DirName: pageDir, DirPath: "/root/sessions/" + dir + "/" + pageDir,
+			Page: store.Page{ID: "0001", Title: title, Summary: "ようやく", CreatedAt: at(h)},
+		}},
+		Bytes: 2048,
+	}
+}
+
+// fixture は 2 セッション入りの索引と、それを載せたハンドラを返す。
+// 3 つ目は refresh が呼ばれた回数。
+func fixture(t *testing.T) (*index.Index, http.Handler, *int) {
+	t.Helper()
+	ix := index.New()
+	ix.Replace(map[string]store.SessionEntry{
+		"20260829-aaaa": mkEntry("20260829-aaaa", "sa", "Notion の調査", "0001-notion", 9),
+		"20260829-bbbb": mkEntry("20260829-bbbb", "sb", "Slack の調査", "0001-slack", 18),
+	}, nil)
+
+	calls := 0
+	s := New(config.Config{Addr: "127.0.0.1:7777", Root: "/root"}, ix, func() { calls++ })
+	return ix, s.Handler(), &calls
+}
+
+func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec
+}
+
+func TestListShowsSessionsNewestFirst(t *testing.T) {
+	_, h, _ := fixture(t)
+	rec := get(t, h, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	slack := strings.Index(body, "Slack の調査")
+	notion := strings.Index(body, "Notion の調査")
+	if slack < 0 || notion < 0 {
+		t.Fatalf("両方のセッションが出ていない")
+	}
+	if slack > notion {
+		t.Errorf("新しい順になっていない")
+	}
+}
+
+func TestListPageLinksUseOwnSessionDir(t *testing.T) {
+	_, h, _ := fixture(t)
+	body := get(t, h, "/").Body.String()
+	for _, want := range []string{
+		"/p/20260829-aaaa/0001-notion",
+		"/p/20260829-bbbb/0001-slack",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("リンクが無い: %s", want)
+		}
+	}
+	// セッションを取り違えたリンクが出ていないこと。
+	for _, bad := range []string{
+		"/p/20260829-aaaa/0001-slack",
+		"/p/20260829-bbbb/0001-notion",
+	} {
+		if strings.Contains(body, bad) {
+			t.Errorf("別セッションのページにリンクしている: %s", bad)
+		}
+	}
+}
+
+func TestListFiltersByQuery(t *testing.T) {
+	_, h, _ := fixture(t)
+	body := get(t, h, "/?q=slack").Body.String()
+	if strings.Contains(body, "Notion の調査") {
+		t.Errorf("絞り込まれていない")
+	}
+	if !strings.Contains(body, "Slack の調査") {
+		t.Errorf("該当が消えている")
+	}
+}
+
+func TestListEmptyState(t *testing.T) {
+	ix := index.New()
+	ix.Replace(map[string]store.SessionEntry{}, nil)
+	s := New(config.Config{Addr: "127.0.0.1:7777"}, ix, func() {})
+	body := get(t, s.Handler(), "/").Body.String()
+	if !strings.Contains(body, "まだページがありません") {
+		t.Errorf("空状態が出ていない")
+	}
+}
+
+func TestCSPHeader(t *testing.T) {
+	_, h, _ := fixture(t)
+	// CSP はこのプロジェクトが正確な値を拘束している数少ない制約なので、
+	// server.CSP 定数ではなく独立したリテラルと比較する。定数同士の比較だと
+	// server.go 側で CSP を緩めてもテストが追従してしまい、検出できない。
+	const wantCSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+	got := get(t, h, "/").Header().Get("Content-Security-Policy")
+	if got != wantCSP {
+		t.Errorf("CSP = %q, want %q", got, wantCSP)
+	}
+	// フラグメントに <script> を書けない設計の担保。実際に返ったヘッダで検証する。
+	if strings.Contains(got, "script-src") {
+		t.Errorf("script-src を開けてはいけない: %q", got)
+	}
+}
+
+func TestStyleCSSServed(t *testing.T) {
+	_, h, _ := fixture(t)
+	rec := get(t, h, "/_/style.css")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "--bg") {
+		t.Errorf("style.css の中身が違う")
+	}
+}
+
+func TestTemplatesNotServedAsAssets(t *testing.T) {
+	_, h, _ := fixture(t)
+	if rec := get(t, h, "/_/layout.html"); rec.Code == http.StatusOK {
+		t.Errorf("テンプレートが配信されている")
+	}
+}
+
+// TestTouchReturnsNoContentWithoutAccept は cc-pages new からの呼び出しを想定する。
+// Accept ヘッダが無いリクエストには 204 を返す。
+func TestTouchReturnsNoContentWithoutAccept(t *testing.T) {
+	_, h, calls := fixture(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/_/touch", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if *calls != 1 {
+		t.Errorf("refresh が呼ばれた回数 = %d, want 1", *calls)
+	}
+}
+
+// TestTouchRedirectsForBrowser はブラウザの「再読み込み」フォーム送信を想定する。
+// Accept ヘッダがあるリクエストには一覧へのリダイレクトを返す。
+func TestTouchRedirectsForBrowser(t *testing.T) {
+	_, h, calls := fixture(t)
+	req := httptest.NewRequest(http.MethodPost, "/_/touch", nil)
+	req.Header.Set("Accept", "text/html")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusSeeOther)
+	}
+	if got := rec.Header().Get("Location"); got != "/" {
+		t.Errorf("Location = %q, want %q", got, "/")
+	}
+	if *calls != 1 {
+		t.Errorf("refresh が呼ばれた回数 = %d, want 1", *calls)
+	}
+}
+
+func TestUnknownPathIs404(t *testing.T) {
+	_, h, _ := fixture(t)
+	if rec := get(t, h, "/p/none/none"); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestHumanBytes(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{{512, "512 B"}, {2048, "2.0 KB"}, {1572864, "1.5 MB"}}
+	for _, c := range cases {
+		if got := humanBytes(c.in); got != c.want {
+			t.Errorf("humanBytes(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestDisplayedTimesShareOneZone は、同じ瞬間を別のロケーションで持つ 2 つの値が
+// 同じ壁時計で表示されることを確認する。
+//
+// セッションの LastSeen は jsonl 由来だと RFC3339 の "...Z" つまり UTC で、
+// ページの CreatedAt は time.Now() 由来なので +09:00 のような現地オフセットを持つ。
+// time.Format は値のロケーションのまま出すため、揃えないとセッションのヘッダと
+// その直下のページ行に同じ瞬間が 9 時間ずれて並ぶ。
+//
+// 機械の TZ に依存しないよう、ページ側は固定オフセットのゾーンで作る。
+func TestDisplayedTimesShareOneZone(t *testing.T) {
+	jst := time.FixedZone("JST", 9*3600)
+	instant := time.Date(2026, 8, 29, 13, 30, 0, 0, time.UTC)
+
+	ix := index.New()
+	ix.Replace(map[string]store.SessionEntry{
+		"20260829-aaaa": {
+			DirName: "20260829-aaaa", DirPath: "/root/sessions/20260829-aaaa",
+			// session.json の LastSeen は jsonl 由来のものより古い。索引は新しい方を採る。
+			Session: store.Session{SessionID: "sa", Dir: "20260829-aaaa", LastSeen: at(1)},
+			Pages: []store.PageEntry{{
+				DirName: "0001-x", DirPath: "/root/sessions/20260829-aaaa/0001-x",
+				// LastSeen と同じ瞬間を、UTC ではないゾーンで持つ。
+				Page: store.Page{ID: "0001", Title: "ページ", CreatedAt: instant.In(jst)},
+			}},
+		},
+	}, map[string]transcript.Meta{"sa": {SessionID: "sa", LastSeen: instant}})
+
+	s := New(config.Config{Addr: "127.0.0.1:7777", Root: "/root"}, ix, func() {})
+	body := get(t, s.Handler(), "/p/20260829-aaaa/").Body.String()
+
+	// 出るのはヘッダの "2006-01-02 15:04" とページ行の "15:04" の 2 つだけ。
+	got := regexp.MustCompile(`\d\d:\d\d`).FindAllString(body, -1)
+	if len(got) != 2 {
+		t.Fatalf("時刻が 2 つ出るはず: %v\n%s", got, body)
+	}
+	if got[0] != got[1] {
+		t.Errorf("ヘッダ %q とページ行 %q で同じ瞬間の表示がずれている", got[0], got[1])
+	}
+	want := instant.Local().Format("15:04")
+	for _, g := range got {
+		if g != want {
+			t.Errorf("表示時刻 = %q, want %q (ローカルタイムに揃える)", g, want)
+		}
+	}
+}
+
+// TestListSearchMissHasOwnMessage は、検索して 0 件だったときの文言が空状態の
+// ものと分かれていることを確認する。同じ「まだページがありません」を出すと、
+// 絞り込んだだけなのにデータが消えたように読める。
+func TestListSearchMissHasOwnMessage(t *testing.T) {
+	_, h, _ := fixture(t)
+	body := get(t, h, "/?q=zzz-nomatch").Body.String()
+	if strings.Contains(body, "まだページがありません") {
+		t.Errorf("検索 0 件に空状態の文言が出ている: %s", body)
+	}
+	if !strings.Contains(body, "に一致するページはありません") {
+		t.Errorf("検索 0 件の文言が出ていない: %s", body)
+	}
+	if !strings.Contains(body, "zzz-nomatch") {
+		t.Errorf("何で絞り込んだのかが出ていない: %s", body)
+	}
+}

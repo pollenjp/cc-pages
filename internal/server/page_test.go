@@ -1,0 +1,489 @@
+package server
+
+import (
+	"html/template"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/pollenjp/cc-pages/internal/config"
+	"github.com/pollenjp/cc-pages/internal/index"
+	"github.com/pollenjp/cc-pages/internal/store"
+)
+
+// realFixture は実ファイルを伴う索引とハンドラを返す。
+// pageDirs の順に 0001, 0002... のページを作り、それぞれに fragment を書く。
+func realFixture(t *testing.T, fragment string, pageDirs ...string) http.Handler {
+	t.Helper()
+	root := t.TempDir()
+	sessionPath := filepath.Join(root, "sessions", "20260829-aaaa")
+
+	var pages []store.PageEntry
+	for i, name := range pageDirs {
+		dir := filepath.Join(sessionPath, name)
+		if err := os.MkdirAll(filepath.Join(dir, "assets"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(fragment), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "assets", "a.txt"), []byte("あさっと"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "page.json"), []byte("{\"schema\":1}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		pages = append(pages, store.PageEntry{
+			DirName: name, DirPath: dir,
+			Page: store.Page{
+				ID: store.FormatID(i + 1), Title: name,
+				Mode: store.ModeFragment, CreatedAt: at(9),
+			},
+		})
+	}
+
+	ix := index.New()
+	ix.Replace(map[string]store.SessionEntry{
+		"20260829-aaaa": {
+			DirName: "20260829-aaaa", DirPath: sessionPath,
+			Session: store.Session{SessionID: "sa", Dir: "20260829-aaaa", LastSeen: at(9)},
+			Pages:   pages,
+		},
+	}, nil)
+	return New(config.Config{Addr: "127.0.0.1:7777", Root: root}, ix, func() {}).Handler()
+}
+
+func TestPageRendersFragmentInsideChrome(t *testing.T) {
+	h := realFixture(t, "<h1>見出し</h1><div class=\"note\">囲み</div>", "0001-alpha")
+	rec := get(t, h, "/p/20260829-aaaa/0001-alpha/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"<!doctype html>", // chrome が付いている
+		"<link rel=\"stylesheet\" href=\"/_/style.css\">",
+		"<h1>見出し</h1>", // フラグメントがエスケープされていない
+		"<div class=\"note\">囲み</div>",
+		"cc-pages", // ナビ
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("出力に %q が無い", want)
+		}
+	}
+}
+
+func TestPageJapaneseDirNameRoundTrips(t *testing.T) {
+	h := realFixture(t, "<p>日本語パス</p>", "0001-テスト")
+	rec := get(t, h, "/p/20260829-aaaa/"+url.PathEscape("0001-テスト")+"/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "日本語パス") {
+		t.Errorf("本文が出ていない")
+	}
+}
+
+func TestPageMissingIndexHTMLShowsPlaceholder(t *testing.T) {
+	root := t.TempDir()
+	pageDir := filepath.Join(root, "sessions", "20260829-aaaa", "0001-mada")
+	if err := os.MkdirAll(pageDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ix := index.New()
+	ix.Replace(map[string]store.SessionEntry{
+		"20260829-aaaa": {
+			DirName: "20260829-aaaa", DirPath: filepath.Dir(pageDir),
+			Session: store.Session{SessionID: "sa", Dir: "20260829-aaaa", LastSeen: at(9)},
+			Pages: []store.PageEntry{{
+				DirName: "0001-mada", DirPath: pageDir,
+				Page: store.Page{ID: "0001", Title: "まだ", Mode: store.ModeFragment},
+			}},
+		},
+	}, nil)
+	h := New(config.Config{Root: root}, ix, func() {}).Handler()
+	rec := get(t, h, "/p/20260829-aaaa/0001-mada/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (書きかけでも 500 にしない)", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "まだ書かれていません") {
+		t.Errorf("プレースホルダが出ていない")
+	}
+}
+
+func TestPagePrevNextLinks(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha", "0002-beta", "0003-gamma")
+
+	first := get(t, h, "/p/20260829-aaaa/0001-alpha/").Body.String()
+	if strings.Contains(first, "前のページ") {
+		t.Errorf("先頭に前のページが出ている")
+	}
+	if !strings.Contains(first, "/p/20260829-aaaa/0002-beta") {
+		t.Errorf("先頭に次のページのリンクが無い")
+	}
+
+	mid := get(t, h, "/p/20260829-aaaa/0002-beta/").Body.String()
+	if !strings.Contains(mid, "/p/20260829-aaaa/0001-alpha") {
+		t.Errorf("中間に前のページのリンクが無い")
+	}
+	if !strings.Contains(mid, "/p/20260829-aaaa/0003-gamma") {
+		t.Errorf("中間に次のページのリンクが無い")
+	}
+
+	last := get(t, h, "/p/20260829-aaaa/0003-gamma/").Body.String()
+	if strings.Contains(last, "次のページ") {
+		t.Errorf("末尾に次のページが出ている")
+	}
+}
+
+func TestSessionIndexListsPages(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha", "0002-beta")
+	rec := get(t, h, "/p/20260829-aaaa/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"/p/20260829-aaaa/0001-alpha", "/p/20260829-aaaa/0002-beta"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("ページ一覧に %q が無い", want)
+		}
+	}
+}
+
+func TestAssetsServed(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha")
+	rec := get(t, h, "/p/20260829-aaaa/0001-alpha/assets/a.txt")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if rec.Body.String() != "あさっと" {
+		t.Errorf("body = %q", rec.Body.String())
+	}
+}
+
+// lowercasePercentEscapes は "%XX" の16進部分だけを小文字化する。
+//
+// url.PathEscape が出すのは常に大文字 %XX だが、実際のブラウザのアドレスバーは
+// 小文字 %xx を使う。期待値をバイト列で決め打ちせず url.PathEscape の出力から
+// 機械的に導くための補助。
+func lowercasePercentEscapes(s string) string {
+	return regexp.MustCompile(`%[0-9A-Fa-f]{2}`).ReplaceAllStringFunc(s, strings.ToLower)
+}
+
+// TestAssetsServedForAnyEncodingForm は、日本語のページディレクトリ配下の asset が、
+// リクエストのパスがどうエンコードされて届いても配信されることを確認する。
+//
+// 実機のブラウザで再現した不具合そのもの: ページ本体 (chrome) は 3 通りの
+// エンコードすべてで 200 が返るのに、assets/ 配下の画像だけは小文字 %xx と
+// 生の UTF-8 で 404 になっていた。旧実装は http.StripPrefix に
+// r.PathValue から組み立てた「デコード済みの」prefix を渡しており、
+// StripPrefix は r.URL.RawPath が空でないとき r.URL.EscapedPath() (エンコードの
+// ままの生の値) からも同じ prefix を剥がそうとする。RawPath は「エンコードされた
+// 形が、デコード後の値を正準にパーセントエンコードし直した形とバイト単位で一致
+// しない」ときにだけ立つフィールドで、それは小文字 %xx や生の UTF-8 で
+// リクエストされた瞬間に起きる。だからその 2 つの形だけ剥がしに失敗し、
+// ハンドラを素通しせず 404 を返していた。
+//
+// 期待値は url.PathEscape の出力から機械的に導き、エンコードの規則そのものを
+// 検証する (ハードコードしたバイト列と比較しない)。
+func TestAssetsServedForAnyEncodingForm(t *testing.T) {
+	const pageDir = "0001-テスト"
+	h := realFixture(t, "<p>x</p>", pageDir)
+
+	upper := url.PathEscape(pageDir) // url.PathEscape は大文字 %XX しか出さない
+	lower := lowercasePercentEscapes(upper)
+
+	forms := []struct {
+		name string
+		enc  string
+	}{
+		{"大文字%XX(url.PathEscapeの出力そのまま、今日も通る)", upper},
+		{"小文字%xx(実ブラウザのアドレスバーがこれ)", lower},
+		{"生のUTF-8(無エンコード)", pageDir},
+	}
+	for _, f := range forms {
+		t.Run(f.name, func(t *testing.T) {
+			rec := get(t, h, "/p/20260829-aaaa/"+f.enc+"/assets/a.txt")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", rec.Code)
+			}
+			if rec.Body.String() != "あさっと" {
+				t.Errorf("body = %q, want %q", rec.Body.String(), "あさっと")
+			}
+		})
+	}
+}
+
+func TestAssetsCannotEscapeDirectory(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha")
+	rec := get(t, h, "/p/20260829-aaaa/0001-alpha/assets/../page.json")
+	if rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "schema") {
+		t.Errorf("assets の外に出られてしまった: %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAssetsCannotEscapeDirectoryEncoded は TestAssetsCannotEscapeDirectory の
+// パーセントエンコード版。
+//
+// net/http.ServeMux は生の ".." セグメントを含むリクエストを、ハンドラに
+// 届く前に自分でクリーニングしてリダイレクトする (上のテストが実際に検証
+// できているのはこのクリーニングであって、ハンドラ自身の防御ではない)。
+// エスケープした path 要素はルーティング上のセパレータとして扱われない
+// 契約なので、%2e%2e%2F はクリーニング対象にならずハンドラまで届く。
+// ハンドラ自身の防御を確かめるには、この形で送る必要がある。
+//
+// アサーションはステータスコードではなく、page.json の中身
+// (`"schema"`) が本文に出ていないことそのもの。エンコードされた形が
+// 400 になるか 404 になるかは実装の細部で、外から保証すべき契約ではない。
+func TestAssetsCannotEscapeDirectoryEncoded(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha")
+	rec := get(t, h, "/p/20260829-aaaa/0001-alpha/assets/%2e%2e%2Fpage.json")
+	if strings.Contains(rec.Body.String(), "schema") {
+		t.Errorf("assets の外に出られてしまった (encoded ..): %d %q", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAssetsDoNotFollowSymlinksOutside は、assets/ 配下のシンボリックリンクが
+// ページディレクトリの外を指していても、リンク先の中身が配信されないことを
+// 確認する。
+//
+// os.DirFS はセキュリティ境界ではないとドキュメントに明記されている:
+// ディレクトリ内のシンボリックリンクが外を指していれば、普通に辿って
+// 読めてしまう。os.OpenRoot への切り替えがこれを防いでいることを確かめる
+// 回帰テスト。
+//
+// realFixture はページディレクトリの実パスを返さない (assets/ の中に
+// リンクを仕込むにはパスが要る) ので、ここでは同じ形をこの関数内で
+// 直接組み立てる。
+func TestAssetsDoNotFollowSymlinksOutside(t *testing.T) {
+	root := t.TempDir()
+	pageDir := filepath.Join(root, "sessions", "20260829-aaaa", "0001-alpha")
+	assetsDir := filepath.Join(pageDir, "assets")
+	if err := os.MkdirAll(assetsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pageDir, "index.html"), []byte("<p>x</p>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "a.txt"), []byte("あさっと"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// リンク先その1: ページ自身の page.json (assets/ の1つ上、データルートの中)。
+	const pageJSONSecret = "PAGE-JSON-MUST-NOT-LEAK"
+	pageJSON := filepath.Join(pageDir, "page.json")
+	if err := os.WriteFile(pageJSON, []byte(`{"schema":1,"s":"`+pageJSONSecret+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// リンク先その2: データルートの外にある無関係なファイル。/etc/passwd に
+	// 依存せず、既知の中身を持つ自前のファイルにすることで移植可能にする。
+	const outsideSecret = "OUTSIDE-DATA-ROOT-MUST-NOT-LEAK"
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte(outsideSecret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(pageJSON, filepath.Join(assetsDir, "link-rel")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(assetsDir, "link-abs")); err != nil {
+		t.Fatal(err)
+	}
+
+	ix := index.New()
+	ix.Replace(map[string]store.SessionEntry{
+		"20260829-aaaa": {
+			DirName: "20260829-aaaa", DirPath: filepath.Dir(pageDir),
+			Session: store.Session{SessionID: "sa", Dir: "20260829-aaaa", LastSeen: at(9)},
+			Pages: []store.PageEntry{{
+				DirName: "0001-alpha", DirPath: pageDir,
+				Page: store.Page{ID: "0001", Title: "0001-alpha", Mode: store.ModeFragment, CreatedAt: at(9)},
+			}},
+		},
+	}, nil)
+	h := New(config.Config{Addr: "127.0.0.1:7777", Root: root}, ix, func() {}).Handler()
+
+	for _, name := range []string{"link-rel", "link-abs"} {
+		rec := get(t, h, "/p/20260829-aaaa/0001-alpha/assets/"+name)
+		body := rec.Body.String()
+		if strings.Contains(body, pageJSONSecret) || strings.Contains(body, outsideSecret) {
+			t.Errorf("%s: assets/ の外のシンボリックリンク先が漏れた: %d %q", name, rec.Code, body)
+		}
+	}
+
+	// 通常のファイルはこれまで通り配信される (対策が asset 配信自体を
+	// 壊していないことの確認)。
+	rec := get(t, h, "/p/20260829-aaaa/0001-alpha/assets/a.txt")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if rec.Body.String() != "あさっと" {
+		t.Errorf("body = %q", rec.Body.String())
+	}
+}
+
+func TestPageNotFound(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha")
+	if rec := get(t, h, "/p/20260829-aaaa/9999-none"); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	if rec := get(t, h, "/p/none/0001-alpha"); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+	if rec := get(t, h, "/p/none/"); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestPageRendersAtTrailingSlashURL はページの正規 URL (末尾スラッシュ付き) で
+// 200 が返ることを確認する。
+func TestPageRendersAtTrailingSlashURL(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha")
+	if rec := get(t, h, "/p/20260829-aaaa/0001-alpha/"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+}
+
+// TestPageSlashlessURLRedirectsToCanonical は末尾スラッシュの無い旧形式が
+// 引き続きページに届くことを確認する。cc-pages new は既にこの形の URL を
+// 出力しており、設計書も例示で固定しているので、ここを壊すと配った
+// リンクが死ぬ。
+//
+// 実装は明示ルート + 301。ServeMux は「末尾スラッシュ付きだけを登録した」
+// 場合に 307 を自動で返すが、それは存在しないページにも無条件で掛かり、
+// 「知らない URL は 404」(TestPageNotFound) を崩すので使っていない。
+func TestPageSlashlessURLRedirectsToCanonical(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha")
+	rec := get(t, h, "/p/20260829-aaaa/0001-alpha")
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("status = %d, want 301", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if want := "/p/20260829-aaaa/0001-alpha/"; loc != want {
+		t.Fatalf("Location = %q, want %q", loc, want)
+	}
+	if rec2 := get(t, h, loc); rec2.Code != http.StatusOK {
+		t.Errorf("リダイレクト先の status = %d, want 200", rec2.Code)
+	}
+}
+
+// TestNoBaseTagAnywhere は描画されるどのページにも <base> が出ないことを確認する。
+//
+// ページ URL を末尾スラッシュの正規形にしたことで、相対参照 (assets/x.png) は
+// <base> 無しで正しく解決するようになった。逆に <base> を戻すと、HTML 仕様
+// どおり <a href="#toc"> が「別文書の断片」に解決されてページ内移動ではなく
+// 遷移になり、しかもその URL にはルートが無いので 404 になる。
+func TestNoBaseTagAnywhere(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha")
+	for _, path := range []string{"/p/20260829-aaaa/0001-alpha/", "/p/20260829-aaaa/"} {
+		if body := get(t, h, path).Body.String(); strings.Contains(body, "<base") {
+			t.Errorf("%s に base タグが出ている: %s", path, body)
+		}
+	}
+	_, lh, _ := fixture(t)
+	if body := get(t, lh, "/").Body.String(); strings.Contains(body, "<base") {
+		t.Errorf("一覧に base タグが出ている: %s", body)
+	}
+}
+
+// TestGeneratedLinksUseTrailingSlash は前後ページのリンクとセッション内一覧の
+// リンクが正規形 (末尾スラッシュ付き) であることを確認する。前方一致では
+// スラッシュを落とした実装を素通しさせてしまうので、完全な形で照合する。
+func TestGeneratedLinksUseTrailingSlash(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha", "0002-beta", "0003-gamma")
+
+	mid := get(t, h, "/p/20260829-aaaa/0002-beta/").Body.String()
+	for _, want := range []string{
+		`href="/p/20260829-aaaa/0001-alpha/"`,
+		`href="/p/20260829-aaaa/0003-gamma/"`,
+	} {
+		if !strings.Contains(mid, want) {
+			t.Errorf("前後リンクに %s が無い: %s", want, mid)
+		}
+	}
+
+	list := get(t, h, "/p/20260829-aaaa/").Body.String()
+	for _, want := range []string{
+		`href="/p/20260829-aaaa/0001-alpha/"`,
+		`href="/p/20260829-aaaa/0002-beta/"`,
+	} {
+		if !strings.Contains(list, want) {
+			t.Errorf("セッション内一覧に %s が無い: %s", want, list)
+		}
+	}
+}
+
+// TestPageLinksEscapeJapaneseDirName は日本語のページディレクトリ名でも、
+// 生成されるリンクがパーセントエスケープされ末尾スラッシュで終わることを
+// 確認する。期待値はハードコードしたバイト列ではなく url.PathEscape から導き、
+// エスケープの規則そのものを検証する。
+func TestPageLinksEscapeJapaneseDirName(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-テスト", "0002-つぎ")
+	canonical := "/p/20260829-aaaa/" + url.PathEscape("0001-テスト") + "/"
+
+	rec := get(t, h, canonical)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	want := `href="/p/20260829-aaaa/` + url.PathEscape("0002-つぎ") + `/"`
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Errorf("次のページへのリンク %s が無い: %s", want, rec.Body.String())
+	}
+
+	// 旧形式もリダイレクト経由で正規形へ届く。
+	old := strings.TrimSuffix(canonical, "/")
+	r := get(t, h, old)
+	if r.Code != http.StatusMovedPermanently || r.Header().Get("Location") != canonical {
+		t.Errorf("%q -> %d %q, want 301 %q", old, r.Code, r.Header().Get("Location"), canonical)
+	}
+}
+
+// TestBreadcrumbLinksToSession はページのパンくずのセッション部分が、そのセッションの
+// ページ一覧へのリンクになっていることを確認する。ここが素のテキストだと、ページから
+// 同じセッションの他のページへ戻る動線が無くなる。
+func TestBreadcrumbLinksToSession(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha")
+	body := get(t, h, "/p/20260829-aaaa/0001-alpha/").Body.String()
+	if !strings.Contains(body, `<span class="crumb"><a href="/p/20260829-aaaa/">`) {
+		t.Errorf("パンくずのセッションがリンクになっていない: %s", body)
+	}
+	// セッション内一覧では自分自身へのパンくずリンクは出さない。
+	sess := get(t, h, "/p/20260829-aaaa/").Body.String()
+	if strings.Contains(sess, `<span class="crumb"><a`) {
+		t.Errorf("セッション内一覧でパンくずがリンクになっている: %s", sess)
+	}
+}
+
+// TestRenderWritesNothingOnTemplateFailure は、描画が途中で失敗したときに w へ
+// 部分的な HTML が漏れないことを確認する。
+//
+// w へ直接 ExecuteTemplate すると、Content-Type と 200 を立てた後で失敗した場合に
+// 部分出力が既に書き出されており、続く http.Error はヘッダを差し替えられず壊れた
+// HTML に平文を追記するだけになる。render がいったんバッファに組み立ててから
+// コピーしているのはこのため。unexported なので同じパッケージから直接呼ぶ。
+func TestRenderWritesNothingOnTemplateFailure(t *testing.T) {
+	const partial = "PARTIAL-OUTPUT-MUST-NOT-LEAK"
+	// .Boom は pageData に無いフィールドなので、partial を書き出した後に
+	// 実行時エラーになる。
+	tmpl := template.Must(template.New("layout").Parse(partial + "{{.Boom}}"))
+
+	s := New(config.Config{}, index.New(), func() {})
+	rec := httptest.NewRecorder()
+	s.render(rec, tmpl, pageData{})
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, partial) {
+		t.Errorf("部分出力が漏れている: %q", body)
+	}
+	if ct := rec.Header().Get("Content-Type"); strings.Contains(ct, "text/html") {
+		t.Errorf("Content-Type = %q, 失敗経路で text/html を立ててはいけない", ct)
+	}
+}

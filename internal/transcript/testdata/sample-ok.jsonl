@@ -1,0 +1,5 @@
+{"type":"mode","mode":"normal","sessionId":"11111111-2222-3333-4444-555555555555"}
+{"parentUuid":null,"type":"user","message":{"role":"user","content":"こんにちは"},"timestamp":"2026-08-29T10:00:00.000Z","cwd":"/home/u/proj","sessionId":"11111111-2222-3333-4444-555555555555","gitBranch":"main"}
+{"type":"assistant","message":{"role":"assistant"},"timestamp":"2026-08-29T10:00:05.000Z","cwd":"/home/u/proj","sessionId":"11111111-2222-3333-4444-555555555555","gitBranch":"main"}
+{"type":"ai-title","aiTitle":"挨拶のやりとり","sessionId":"11111111-2222-3333-4444-555555555555"}
+{"type":"user","message":{"role":"user","content":"ありがとう"},"timestamp":"2026-08-29T11:30:00.000Z","cwd":"/home/u/proj","sessionId":"11111111-2222-3333-4444-555555555555","gitBranch":"feat/x"}

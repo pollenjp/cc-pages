@@ -1,0 +1,20 @@
+{{define "body"}}
+{{if not .Sessions}}{{if .Query}}<p class="empty">「{{.Query}}」に一致するページはありません。</p>
+{{else}}<p class="empty">まだページがありません。</p>{{end}}{{end}}
+{{range $sess := .Sessions}}
+<section class="session">
+  <h2><a href="/p/{{$sess.DirName}}/">{{$sess.Title}}</a></h2>
+  <div class="meta">
+    <span>{{$sess.LastSeen.Format "2006-01-02 15:04"}}</span>
+    <span>{{$sess.PageCount}} ページ</span>
+    {{if $sess.GitBranch}}<span>{{$sess.GitBranch}}</span>{{end}}
+    {{if $sess.Cwd}}<span>{{$sess.Cwd}}</span>{{end}}
+    <span>{{humanBytes $sess.Bytes}}</span>
+  </div>
+  <ol>
+    {{range $sess.Pages}}<li><a href="/p/{{$sess.DirName}}/{{.DirName}}/">{{.Title}}</a>
+      {{if .Summary}}<span class="meta">— {{.Summary}}</span>{{end}}</li>{{end}}
+  </ol>
+</section>
+{{end}}
+{{end}}
