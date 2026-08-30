@@ -199,18 +199,35 @@ func sessionURL(sessionDir string) string {
 //
 // assets/ の外へ出られないことは http.ServeFileFS 自身が保証する: name
 // (r.PathValue("path")) を fs.FS 越しに開く前に r.URL.Path に ".." 要素が
-// 無いか確認し、あれば 400 で弾く。加えて os.DirFS 自体も fs.ValidPath に
+// 無いか確認し、あれば 400 で弾く。加えて fs.FS の実装自体も fs.ValidPath に
 // 反する名前 (".." を含む等) を拒む。
+//
+// それは "../" のような字面のトラバーサルの話で、assets/ の中に置かれた
+// シンボリックリンクが外を指すケースはまた別。os.DirFS は「セキュリティ
+// 境界ではない」とドキュメントに明記されている通りで、そのリンクは普通に
+// 辿って読めてしまう。os.OpenRoot (Go 1.24+) はリンクが root の外を指すと
+// 開けなくするので、DirFS ではなくこちらで根付かせる。大した話ではない
+// (このサーバは 127.0.0.1 限定で、assets/ にリンクを仕込める側は対象を
+// 直接読める立場に既にいる) が、防げるものは防いでおく。
 func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 	_, dirPath, ok := s.ix.Page(r.PathValue("session"), r.PathValue("page"))
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	assets := os.DirFS(filepath.Join(dirPath, "assets"))
+	root, err := os.OpenRoot(filepath.Join(dirPath, "assets"))
+	if err != nil {
+		// assets/ を持たないページの方が普通 (何も貼っていないページ)。
+		// os.DirFS もこの場合は Open 時に遅延して同じ 404 相当のエラーに
+		// なっていたので、ここで先に弾いても外から見た挙動は変わらない。
+		http.NotFound(w, r)
+		return
+	}
+	defer root.Close() // *os.Root はディレクトリの fd を握るので閉じ忘れないこと
+	assets := root.FS()
 	// {path...} は "assets/" そのもの (末尾スラッシュ、その先が無い) だと空文字を
 	// 返す。io/fs はルート自身を "" ではなく "." で表す契約 (fs.ValidPath("") は
-	// false) なので、ここで変換しないと os.DirFS(...).Open("") がエラーになり、
+	// false) なので、ここで変換しないと assets.Open("") がエラーになり、
 	// ディレクトリ一覧を出すつもりの参照が 500 になる。
 	name := r.PathValue("path")
 	if name == "" {

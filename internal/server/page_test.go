@@ -248,6 +248,86 @@ func TestAssetsCannotEscapeDirectoryEncoded(t *testing.T) {
 	}
 }
 
+// TestAssetsDoNotFollowSymlinksOutside は、assets/ 配下のシンボリックリンクが
+// ページディレクトリの外を指していても、リンク先の中身が配信されないことを
+// 確認する。
+//
+// os.DirFS はセキュリティ境界ではないとドキュメントに明記されている:
+// ディレクトリ内のシンボリックリンクが外を指していれば、普通に辿って
+// 読めてしまう。os.OpenRoot への切り替えがこれを防いでいることを確かめる
+// 回帰テスト。
+//
+// realFixture はページディレクトリの実パスを返さない (assets/ の中に
+// リンクを仕込むにはパスが要る) ので、ここでは同じ形をこの関数内で
+// 直接組み立てる。
+func TestAssetsDoNotFollowSymlinksOutside(t *testing.T) {
+	root := t.TempDir()
+	pageDir := filepath.Join(root, "sessions", "20260829-aaaa", "0001-alpha")
+	assetsDir := filepath.Join(pageDir, "assets")
+	if err := os.MkdirAll(assetsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pageDir, "index.html"), []byte("<p>x</p>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "a.txt"), []byte("あさっと"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// リンク先その1: ページ自身の page.json (assets/ の1つ上、データルートの中)。
+	const pageJSONSecret = "PAGE-JSON-MUST-NOT-LEAK"
+	pageJSON := filepath.Join(pageDir, "page.json")
+	if err := os.WriteFile(pageJSON, []byte(`{"schema":1,"s":"`+pageJSONSecret+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// リンク先その2: データルートの外にある無関係なファイル。/etc/passwd に
+	// 依存せず、既知の中身を持つ自前のファイルにすることで移植可能にする。
+	const outsideSecret = "OUTSIDE-DATA-ROOT-MUST-NOT-LEAK"
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte(outsideSecret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(pageJSON, filepath.Join(assetsDir, "link-rel")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(assetsDir, "link-abs")); err != nil {
+		t.Fatal(err)
+	}
+
+	ix := index.New()
+	ix.Replace(map[string]store.SessionEntry{
+		"20260829-aaaa": {
+			DirName: "20260829-aaaa", DirPath: filepath.Dir(pageDir),
+			Session: store.Session{SessionID: "sa", Dir: "20260829-aaaa", LastSeen: at(9)},
+			Pages: []store.PageEntry{{
+				DirName: "0001-alpha", DirPath: pageDir,
+				Page: store.Page{ID: "0001", Title: "0001-alpha", Mode: store.ModeFragment, CreatedAt: at(9)},
+			}},
+		},
+	}, nil)
+	h := New(config.Config{Addr: "127.0.0.1:7777", Root: root}, ix, func() {}).Handler()
+
+	for _, name := range []string{"link-rel", "link-abs"} {
+		rec := get(t, h, "/p/20260829-aaaa/0001-alpha/assets/"+name)
+		body := rec.Body.String()
+		if strings.Contains(body, pageJSONSecret) || strings.Contains(body, outsideSecret) {
+			t.Errorf("%s: assets/ の外のシンボリックリンク先が漏れた: %d %q", name, rec.Code, body)
+		}
+	}
+
+	// 通常のファイルはこれまで通り配信される (対策が asset 配信自体を
+	// 壊していないことの確認)。
+	rec := get(t, h, "/p/20260829-aaaa/0001-alpha/assets/a.txt")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if rec.Body.String() != "あさっと" {
+		t.Errorf("body = %q", rec.Body.String())
+	}
+}
+
 func TestPageNotFound(t *testing.T) {
 	h := realFixture(t, "<p>x</p>", "0001-alpha")
 	if rec := get(t, h, "/p/20260829-aaaa/9999-none"); rec.Code != http.StatusNotFound {
