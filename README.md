@@ -1,9 +1,30 @@
 # cc-pages
 
-Claude Code の長い応答を HTML ページとしてローカルに書き出し、専用の web app で読むための
-Go 製ツール。ターミナルの stdout には結論 1 行とリンクだけを返す。
+Claude Code の長い応答を HTML としてローカルに残し、web で読むための Go 製ツール。
+ターミナルの stdout には結論 1 行とリンクだけを返す。
 
-まだ実装は無い。**リモートも未作成で、ローカルのみ**。
+## 使い方
 
-設計は private リポジトリ [`pollenjp/claude-skills`](https://github.com/pollenjp/claude-skills) の
+    go build -o cc-pages .
+    ln -s "$PWD/cc-pages" ~/bin/cc-pages
+
+    cc-pages serve            # 127.0.0.1:7777 で待ち受ける
+    cc-pages new --session "$CLAUDE_CODE_SESSION_ID" --title "調べたこと"
+
+`new` が返す `dir` に `index.html`（`<body>` の中身に相当するフラグメント）を書き、
+`url` をブラウザで開く。
+
+## 設定
+
+| | 既定 | 上書き |
+| --- | --- | --- |
+| bind | `127.0.0.1:7777` | `CC_PAGES_ADDR` / `~/.config/cc-pages/config.toml` の `addr` |
+| データ root | `~/.local/share/cc-pages` | `CC_PAGES_ROOT` / 同 `root` |
+
+## まだ無いもの
+
+mermaid の描画、引用のクリップボードコピー、systemd socket activation、
+`standalone` モード、本文全文検索、`cc-pages open` / `ls`。
+
+設計は `claude-skills`（private）の
 `docs/superpowers/specs/2026-08-29-cc-pages-design.md` にある。

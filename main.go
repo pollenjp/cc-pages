@@ -3,13 +3,21 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/pollenjp/cc-pages/internal/config"
+	"github.com/pollenjp/cc-pages/internal/index"
+	"github.com/pollenjp/cc-pages/internal/server"
 	"github.com/pollenjp/cc-pages/internal/store"
 )
 
@@ -31,6 +39,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "new":
 		return cmdNew(cfg, args[1:])
+	case "serve":
+		return cmdServe(cfg, args[1:])
 	default:
 		return fmt.Errorf("不明なサブコマンド: %s", args[0])
 	}
@@ -78,6 +88,50 @@ func cmdNew(cfg config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
+	store.NotifyTouch(cfg.BaseURL())
 	enc := json.NewEncoder(os.Stdout)
 	return enc.Encode(res)
+}
+
+// cmdServe は索引を作り、HTTP サーバを起動する。
+func cmdServe(cfg config.Config, args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	every := fs.Duration("rescan", 60*time.Second, "定期走査の間隔")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	ix := index.New()
+	r := server.NewRefresher(
+		cfg.SessionsDir(),
+		filepath.Join(home, ".claude", "projects"),
+		ix,
+	)
+	r.Refresh()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go r.Run(ctx, *every)
+
+	srv := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           server.New(cfg, ix, r.Refresh).Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		<-ctx.Done()
+		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(sctx)
+	}()
+
+	fmt.Fprintf(os.Stderr, "cc-pages: %s で待ち受けます (root=%s)\n", cfg.BaseURL(), cfg.Root)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }

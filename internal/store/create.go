@@ -3,6 +3,7 @@ package store
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -204,4 +205,22 @@ func DetectEnv() (cwd, gitBranch string) {
 		return cwd, ""
 	}
 	return cwd, b
+}
+
+// NotifyTouch は動いている cc-pages serve に再インデックスを促す。
+//
+// fire-and-forget。サーバが居なければ何もしない。届かなくても、最悪 60 秒後の
+// 定期走査で拾われる。ここでエラーを返さないのは、new の成功を「サーバが
+// 動いていること」に依存させないため。
+func NotifyTouch(baseURL string) {
+	c := &http.Client{Timeout: 100 * time.Millisecond}
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(baseURL, "/")+"/_/touch", nil)
+	if err != nil {
+		return
+	}
+	resp, err := c.Do(req)
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
 }
