@@ -8,7 +8,7 @@
 </div>
 <ol>
 {{range .Session.Pages}}
-  <li><a href="/p/{{$.Session.DirName}}/{{.DirName}}">{{.Title}}</a>
+  <li><a href="/p/{{$.Session.DirName}}/{{.DirName}}/">{{.Title}}</a>
     {{if .Summary}}<span class="meta">— {{.Summary}}</span>{{end}}
     <span class="meta">{{.CreatedAt.Format "15:04"}}</span></li>
 {{end}}

@@ -50,7 +50,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handleList)
 	mux.HandleFunc("GET /p/{session}/{$}", s.handleSession)
 	mux.HandleFunc("GET /p/{session}/{page}/assets/{path...}", s.handleAsset)
-	mux.HandleFunc("GET /p/{session}/{page}", s.handlePage)
+	mux.HandleFunc("GET /p/{session}/{page}/{$}", s.handlePage)
+	mux.HandleFunc("GET /p/{session}/{page}", s.handlePageLegacy)
 	return s.withHeaders(mux)
 }
 
@@ -118,13 +119,13 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	row := toRow(v)
 	d := pageData{
 		Title: p.Title,
-		Crumb: row.Title + " / " + p.Title,
+		Crumb: p.Title,
 		Body:  readFragment(path),
+		// パンくずのセッション部分はページ一覧へのリンクにする。ページからは
+		// ここを通らないと同じセッションの他のページへ戻れない。
+		SessionTitle: row.Title,
+		SessionURL:   sessionURL(sessionDir),
 	}
-	// フラグメントが書く相対参照 (assets/x.png など) は、末尾スラッシュの無い
-	// このページの URL を基準に解決すると 1 階層上に外れて 404 になる。
-	// <base> でページ自身のディレクトリを基準にする。
-	d.BaseHref = pageURL(sessionDir, pageDir) + "/"
 	// 前後ページ。Pages は連番の昇順に並んでいる。
 	for i, q := range row.Pages {
 		if q.DirName != pageDir {
@@ -140,9 +141,35 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, s.pageTmpl, d)
 }
 
+// handlePageLegacy は末尾スラッシュの無い旧形式の URL を正規形へ送る。
+//
+// cc-pages new は既にこの形の URL を出力しており、設計書も例示で固定している。
+// ServeMux 自身も「末尾スラッシュ付きだけが登録されている」場合に 307 を返す
+// 機能を持つが、それは存在しないページにも無条件で掛かり、「知らない URL は
+// 404」という保証を崩す。だからここで明示的に登録し、引けるページに限って
+// 恒久リダイレクト (301) する。
+func (s *Server) handlePageLegacy(w http.ResponseWriter, r *http.Request) {
+	sessionDir, pageDir := r.PathValue("session"), r.PathValue("page")
+	if _, _, ok := s.ix.Page(sessionDir, pageDir); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	http.Redirect(w, r, pageURL(sessionDir, pageDir), http.StatusMovedPermanently)
+}
+
 // pageURL はページへのパスを組み立てる。日本語のディレクトリ名も通る。
+//
+// 末尾のスラッシュは飾りではない。これがないと、フラグメントが書く相対参照
+// (assets/x.png) が 1 階層上に解決されて 404 になり、同一文書内のアンカー
+// (#toc) も「別の文書の断片」として扱われてページ内移動にならない。
+// <base> で誤魔化すと後者が直らないので、URL 自体を正規形にする。
 func pageURL(sessionDir, pageDir string) string {
-	return "/p/" + url.PathEscape(sessionDir) + "/" + url.PathEscape(pageDir)
+	return sessionURL(sessionDir) + url.PathEscape(pageDir) + "/"
+}
+
+// sessionURL はセッション内ページ一覧へのパスを組み立てる。
+func sessionURL(sessionDir string) string {
+	return "/p/" + url.PathEscape(sessionDir) + "/"
 }
 
 // handleAsset はページディレクトリの assets/ を配信する。

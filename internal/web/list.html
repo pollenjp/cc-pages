@@ -11,7 +11,7 @@
     <span>{{humanBytes $sess.Bytes}}</span>
   </div>
   <ol>
-    {{range $sess.Pages}}<li><a href="/p/{{$sess.DirName}}/{{.DirName}}">{{.Title}}</a>
+    {{range $sess.Pages}}<li><a href="/p/{{$sess.DirName}}/{{.DirName}}/">{{.Title}}</a>
       {{if .Summary}}<span class="meta">— {{.Summary}}</span>{{end}}</li>{{end}}
   </ol>
 </section>

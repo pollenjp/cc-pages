@@ -46,7 +46,9 @@ type pageData struct {
 	Body       template.HTML
 	PrevURL    string
 	NextURL    string
-	BaseHref   string
+	// パンくずのセッション部分。ページ表示のときだけ入る。
+	SessionTitle string
+	SessionURL   string
 }
 
 // toRow は索引のビューをテンプレート用の形に写す。

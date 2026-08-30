@@ -4,13 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
-{{if .BaseHref}}<base href="{{.BaseHref}}">{{end}}
 <link rel="stylesheet" href="/_/style.css">
 </head>
 <body>
 <header class="bar">
   <a href="/">cc-pages</a>
-  <span class="crumb">{{.Crumb}}</span>
+  <span class="crumb">{{if .SessionURL}}<a href="{{.SessionURL}}">{{.SessionTitle}}</a> / {{end}}{{.Crumb}}</span>
   {{if .ShowSearch}}<form method="get" action="/" style="display:contents">
     <input type="search" name="q" value="{{.Query}}" placeholder="タイトル・要約・タグ・依頼・cwd・ブランチ" autofocus>
   </form>{{end}}
