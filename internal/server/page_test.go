@@ -183,3 +183,68 @@ func TestPageNotFound(t *testing.T) {
 		t.Errorf("status = %d, want 404", rec.Code)
 	}
 }
+
+// TestPageEmitsBaseHref はページ表示に <base> が出て、値がページ自身の
+// ディレクトリ (末尾スラッシュ付き) を指すことを確認する。フラグメントが書く
+// assets/... のような相対参照が、末尾スラッシュの無いページ URL のせいで
+// 1 階層上に解決されて 404 になる回帰を捕らえる。
+func TestPageEmitsBaseHref(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha")
+	body := get(t, h, "/p/20260829-aaaa/0001-alpha").Body.String()
+	want := `<base href="/p/20260829-aaaa/0001-alpha/">`
+	if !strings.Contains(body, want) {
+		t.Errorf("出力に %q が無い: %s", want, body)
+	}
+}
+
+// TestSessionIndexHasNoBaseHref はセッション内のページ一覧に <base> が
+// 出ないことを確認する。このページのリンクは元々絶対パスなので base は不要で、
+// handlePage 以外にまで BaseHref がセットされてしまう回帰を捕らえる。
+func TestSessionIndexHasNoBaseHref(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-alpha")
+	body := get(t, h, "/p/20260829-aaaa/").Body.String()
+	if strings.Contains(body, "<base") {
+		t.Errorf("セッション一覧に base タグが出てしまっている: %s", body)
+	}
+}
+
+// TestListPageHasNoBaseHref はトップのセッション一覧に <base> が出ないことを
+// 確認する。TestSessionIndexHasNoBaseHref と同じ回帰を、別ハンドラ
+// (handleList) 側からも捕らえる。
+func TestListPageHasNoBaseHref(t *testing.T) {
+	_, h, _ := fixture(t)
+	body := get(t, h, "/").Body.String()
+	if strings.Contains(body, "<base") {
+		t.Errorf("一覧に base タグが出てしまっている: %s", body)
+	}
+}
+
+// TestPageBaseHrefEscapesJapaneseDirName は日本語のページディレクトリ名でも
+// base href が正しくパーセントエスケープされ、末尾にスラッシュが付くことを
+// 確認する。期待値はハードコードしたバイト列ではなく url.PathEscape から
+// 導き、エスケープの規則そのものを検証する。pageURL の結果に "/" を足し
+// 忘れる、あるいはエスケープを経由しない実装への回帰を捕らえる。
+func TestPageBaseHrefEscapesJapaneseDirName(t *testing.T) {
+	h := realFixture(t, "<p>x</p>", "0001-テスト")
+	body := get(t, h, "/p/20260829-aaaa/"+url.PathEscape("0001-テスト")).Body.String()
+
+	const marker = `<base href="`
+	i := strings.Index(body, marker)
+	if i < 0 {
+		t.Fatalf("base タグが無い: %s", body)
+	}
+	rest := body[i+len(marker):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatalf("base href の終端が無い: %s", body)
+	}
+	href := rest[:j]
+
+	want := "/p/20260829-aaaa/" + url.PathEscape("0001-テスト") + "/"
+	if href != want {
+		t.Errorf("base href = %q, want %q", href, want)
+	}
+	if !strings.HasSuffix(href, "/") {
+		t.Errorf("base href がスラッシュで終わっていない: %q", href)
+	}
+}

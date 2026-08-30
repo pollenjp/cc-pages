@@ -121,6 +121,10 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		Crumb: row.Title + " / " + p.Title,
 		Body:  readFragment(path),
 	}
+	// フラグメントが書く相対参照 (assets/x.png など) は、末尾スラッシュの無い
+	// このページの URL を基準に解決すると 1 階層上に外れて 404 になる。
+	// <base> でページ自身のディレクトリを基準にする。
+	d.BaseHref = pageURL(sessionDir, pageDir) + "/"
 	// 前後ページ。Pages は連番の昇順に並んでいる。
 	for i, q := range row.Pages {
 		if q.DirName != pageDir {

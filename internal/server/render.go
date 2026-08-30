@@ -46,6 +46,7 @@ type pageData struct {
 	Body       template.HTML
 	PrevURL    string
 	NextURL    string
+	BaseHref   string
 }
 
 // toRow は索引のビューをテンプレート用の形に写す。
