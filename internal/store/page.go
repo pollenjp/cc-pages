@@ -14,7 +14,8 @@ const SchemaVersion = 1
 const (
 	// ModeFragment は index.html を <body> の中身として扱う (既定)。
 	ModeFragment = "fragment"
-	// ModeStandalone は index.html を完全な HTML として扱い、iframe に入れる。
+	// ModeStandalone は index.html を完全な HTML として扱い、ページの URL で
+	// そのまま返す (chrome を被せない)。
 	ModeStandalone = "standalone"
 )
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/pollenjp/cc-pages/internal/config"
 	"github.com/pollenjp/cc-pages/internal/index"
+	"github.com/pollenjp/cc-pages/internal/store"
 	"github.com/pollenjp/cc-pages/internal/web"
 )
 
@@ -19,6 +20,15 @@ import (
 // フラグメントの <style> のために style-src だけインラインを開ける。
 // script-src は開けないので、フラグメントに <script> は書けない。
 const CSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+
+// StandaloneCSP は standalone ページの文書にだけ付ける CSP。
+//
+// script-src にインラインを開けるのが standalone モードの存在理由そのもの。
+// ただし外部オリジンは 1 つも足さない — このビューアの前提はローカル完結で、
+// 業務内容が外へ出ないことの方が JS の自由度より重い。'unsafe-eval' も
+// 開けていないので、eval を要求するライブラリは動かない。
+const StandaloneCSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; " +
+	"script-src 'self' 'unsafe-inline'; img-src 'self' data:"
 
 // Server は cc-pages serve の HTTP 側。
 type Server struct {
@@ -108,7 +118,8 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePage は 1 ページを chrome で包んで出す。
+// handlePage は 1 ページを出す。fragment は chrome で包み、standalone は
+// index.html をそのまま返す。
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	sessionDir, pageDir := r.PathValue("session"), r.PathValue("page")
 	v, ok := s.ix.Session(sessionDir)
@@ -121,6 +132,28 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	// standalone の index.html は完全な HTML なので、chrome に埋めると <html> が
+	// 二重になって崩れる。iframe に入れる手もあるが、52rem の本文枠と入れ子の
+	// スクロールに押し込むのは「フラグメントで表現しきれないときの逃げ道」と
+	// いう目的に逆行する。この URL でそのまま返し、外枠は諦める。
+	//
+	// 戻りはブラウザの戻るでセッション一覧に着く。相対リンク ../ がちょうど
+	// そのセッションのページ一覧なので、文書側で戻り導線を作ることもできる。
+	//
+	// 末尾スラッシュのおかげで、中の文書が書く相対参照 (assets/x.png) は
+	// fragment のときと同じ /p/{session}/{page}/assets/... に解決される。
+	//
+	// まだ index.html が書かれていない間は fragment と同じプレースホルダへ
+	// 落とす。作った直後に開いて 404 が出るより「書きかけ」だと分かる。
+	// そのときは chrome を出すので、CSP も緩めたままにしない。
+	if p.Mode == store.ModeStandalone && hasIndexHTML(path) {
+		// withHeaders が既に立てた既定の CSP を、この 1 レスポンスだけ差し替える。
+		// ヘッダはまだフラッシュされていないので Set で上書きが効く。
+		w.Header().Set("Content-Security-Policy", StandaloneCSP)
+		http.ServeFile(w, r, filepath.Join(path, "index.html"))
+		return
+	}
+
 	row := toRow(v)
 	d := pageData{
 		Title: p.Title,
