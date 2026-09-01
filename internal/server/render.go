@@ -88,6 +88,12 @@ func parseTemplate(bodyFile string) *template.Template {
 		ParseFS(web.Templates, "layout.html", bodyFile))
 }
 
+// hasIndexHTML はページディレクトリに index.html が書かれているかを返す。
+func hasIndexHTML(dirPath string) bool {
+	fi, err := os.Stat(filepath.Join(dirPath, "index.html"))
+	return err == nil && fi.Mode().IsRegular()
+}
+
 // readFragment はページディレクトリの index.html を読む。
 //
 // フラグメントは信頼された入力 (自分の CC が書いたもの) なので、テンプレートでは
