@@ -100,10 +100,13 @@ func hasIndexHTML(dirPath string) bool {
 // エスケープせずそのまま埋める。外部への通信は CSP で止める。
 // cc-pages new の直後はまだ書かれていないので、その場合はプレースホルダを返す。
 // ここで 500 を返すと「作った直後に開いたら壊れている」ことになる。
+//
+// 唯一の書き換えが <pre class="diff"> の着色 (diff.go)。書き手に 1 行ずつ
+// span を巻かせない代わりに、ここで機械的に巻く。
 func readFragment(dirPath string) template.HTML {
 	b, err := os.ReadFile(filepath.Join(dirPath, "index.html"))
 	if err != nil {
 		return template.HTML(`<p class="empty">このページの内容はまだ書かれていません。</p>`)
 	}
-	return template.HTML(b)
+	return template.HTML(colorizeDiffs(b))
 }
