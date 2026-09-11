@@ -1,0 +1,12 @@
+{
+  "name": "cc-pages-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "cc-pages の e2e。playwright.config.ts / *.spec.ts はこのディレクトリに置く",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

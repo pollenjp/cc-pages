@@ -23,6 +23,21 @@ Claude Code の長い応答を HTML としてローカルに残し、web で読�
 フラグメントの `<pre class="diff">` は、行頭の `+` / `-` / `@@` を見て 1 行ずつ
 色を付けて返す。diff は生のまま貼ればよく、`<span>` を自分で巻く必要はない。
 
+## e2e
+
+`tests/e2e/` に Playwright のテストがある。diff の着色を実ブラウザで検査し、
+ライト / ダークのスクリーンショットを撮る。
+
+    cd tests/e2e && npm ci
+    nix develop ../.. --command npx playwright test
+
+ブラウザと日本語フォントは `flake.nix` の devShell が供給する。フォントが無いと
+検査は通るのにスクリーンショットだけが豆腐になるので、devShell の外では止まる。
+
+CI は公式の playwright image を使うので flake を必要としない
+(`.github/workflows/e2e.yml`)。撮った画像は PR に sticky コメントで貼られ、
+原寸と trace は artifact から取れる。
+
 ## 設定
 
 | | 既定 | 上書き |
