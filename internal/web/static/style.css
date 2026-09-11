@@ -2,12 +2,16 @@
   --bg: #ffffff; --fg: #1a1a1a; --muted: #6b6b6b; --line: #e2e2e2;
   --accent: #2563eb; --card: #fafafa; --warn-bg: #fff7ed; --warn-line: #fdba74;
   --ok-bg: #f0fdf4; --ok-line: #86efac; --note-bg: #f0f6ff; --note-line: #93c5fd;
+  --diff-add-bg: #e7f7ec; --diff-add-line: #1a7f37;
+  --diff-del-bg: #fdecea; --diff-del-line: #cf222e;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #16181c; --fg: #e6e6e6; --muted: #9aa0a6; --line: #2c3036;
     --accent: #7aa2f7; --card: #1c1f24; --warn-bg: #2a1f14; --warn-line: #b45309;
     --ok-bg: #13251a; --ok-line: #15803d; --note-bg: #14202e; --note-line: #1d4ed8;
+    --diff-add-bg: #18301f; --diff-add-line: #2ea043;
+    --diff-del-bg: #32171b; --diff-del-line: #f85149;
   }
 }
 * { box-sizing: border-box; }
@@ -39,6 +43,21 @@ th { background: var(--card); }
 pre { background: var(--card); border: 1px solid var(--line); border-radius: .4rem;
   padding: .7rem; overflow-x: auto; }
 code { font-family: ui-monospace, monospace; font-size: .9em; }
+/* diff。行ごとの span はサーバが巻く (internal/server/diff.go)。
+   行を display:block にして背景を行全体に敷く。padding を pre から span へ
+   移しているのは、色が枠の端まで届かないと「その行」に見えないため。
+   width:max-content + min-width:100% は横スクロールしたときに背景が
+   途中で切れないようにする定石。 */
+pre.diff { padding: .7rem 0; }
+pre.diff code, pre.diff span { display: block; width: max-content; min-width: 100%; }
+pre.diff span {
+  padding: 0 .7rem; border-left: 3px solid transparent;
+  min-height: 1.6em; min-height: 1lh; /* 空行が潰れないように */
+}
+pre.diff .a { background: var(--diff-add-bg); border-left-color: var(--diff-add-line); }
+pre.diff .d { background: var(--diff-del-bg); border-left-color: var(--diff-del-line); }
+pre.diff .h { color: var(--accent); }
+pre.diff .m { color: var(--muted); }
 .note, .warn, .ok { border-left: 4px solid; border-radius: .3rem; padding: .6rem .9rem; margin: 1rem 0; }
 .note { background: var(--note-bg); border-color: var(--note-line); }
 .warn { background: var(--warn-bg); border-color: var(--warn-line); }
