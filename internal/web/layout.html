@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{.Title}}</title>
 <link rel="stylesheet" href="/_/style.css">
+<!-- 本文幅の記憶を最初の描画より前に反映する。defer / async にするとちらつく。 -->
+<script src="/_/width.js"></script>
 </head>
 <body>
 <header class="bar">
@@ -13,6 +15,7 @@
   {{if .ShowSearch}}<form method="get" action="/" style="display:contents">
     <input type="search" name="q" value="{{.Query}}" placeholder="タイトル・要約・タグ・依頼・cwd・ブランチ" autofocus>
   </form>{{end}}
+  <button type="button" class="widthtoggle"><span class="to-full">全幅にする</span><span class="to-narrow">標準幅にする</span></button>
   <form method="post" action="/_/touch" style="display:contents">
     <button type="submit">再読み込み</button>
   </form>

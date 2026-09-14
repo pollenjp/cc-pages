@@ -1,0 +1,15 @@
+<h1>横に広い図</h1>
+
+<p>このページは e2e の固定 fixture。中身を変えると PR に貼られるスクショも変わる。</p>
+
+<p>図は 1000px。本文枠 (52rem) には収まらず、全幅にすると丸ごと入る。<code>max-width:none</code>
+を明示しているのは、書き手が「縮小せず原寸で出す」と決めた実際のページに合わせるため
+— ビューア側の CSS では上書きできない形をそのまま再現している。</p>
+
+<h2>1. 取り込みの流れ</h2>
+<div class="scroll" id="wide-figure">
+<img src="assets/pipeline.svg" alt="取り込みの流れ" style="max-width:none">
+</div>
+
+<p>標準幅では右端の <strong>Datastore</strong> が枠の外に出る。全幅にすると 5 つの箱が
+すべて見える。</p>

@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="240" viewBox="0 0 1000 240"
+     font-family="Noto Sans CJK JP, Noto Sans JP, sans-serif">
+  <rect width="1000" height="240" fill="#ffffff"/>
+  <text x="500" y="34" text-anchor="middle" font-size="17" font-weight="700" fill="#1a1a1a">
+    取り込みの流れ — 右端まで見えていれば全幅
+  </text>
+
+  <g stroke="#1a1a1a" stroke-width="1.6" fill="none" marker-end="url(#a)">
+    <path d="M182 140 H216"/>
+    <path d="M382 140 H416"/>
+    <path d="M582 140 H616"/>
+    <path d="M782 140 H816"/>
+  </g>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7"
+            orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#1a1a1a"/>
+    </marker>
+  </defs>
+
+  <g font-size="15" fill="#1a1a1a" text-anchor="middle">
+    <rect x="20"  y="105" width="162" height="70" rx="6" fill="#fef3c7" stroke="#b45309"/>
+    <text x="101" y="133">worker-agent</text><text x="101" y="155">(投入)</text>
+
+    <rect x="220" y="105" width="162" height="70" rx="6" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="301" y="133">GCS</text><text x="301" y="155">(動画)</text>
+
+    <rect x="420" y="105" width="162" height="70" rx="6" fill="#fef3c7" stroke="#b45309"/>
+    <text x="501" y="133">indexer</text><text x="501" y="155">(構造化)</text>
+
+    <rect x="620" y="105" width="162" height="70" rx="6" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="701" y="133">Cloud SQL</text><text x="701" y="155">(メタ情報)</text>
+
+    <rect x="820" y="105" width="162" height="70" rx="6" fill="#dcfce7" stroke="#15803d"/>
+    <text x="901" y="133">Datastore</text><text x="901" y="155">(検索対象)</text>
+  </g>
+
+  <text x="901" y="205" text-anchor="middle" font-size="13" fill="#15803d">
+    ← ここが切れていれば標準幅
+  </text>
+</svg>

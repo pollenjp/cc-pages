@@ -80,10 +80,12 @@ func TestStandalonePageHasNoChrome(t *testing.T) {
 	h := standaloneFixture(t, store.ModeStandalone, sampleDoc)
 	body := get(t, h, "/p/20260829-aaaa/0001-alpha/").Body.String()
 	for _, unwanted := range []string{
-		"<iframe",         // 箱に入れない
-		"<article>",       // フラグメント用の包みも被せない
-		"再読み込み",           // ナビ
-		"/_/style.css",    // アプリの CSS は当たらない
+		"<iframe",      // 箱に入れない
+		"<article>",    // フラグメント用の包みも被せない
+		"再読み込み",        // ナビ
+		"/_/style.css", // アプリの CSS は当たらない
+		"/_/width.js",  // 幅トグルも chrome の一部。standalone は元から幅自由
+		"widthtoggle",
 		"page.json のタイトル", // <title> は中の文書のものを使う
 	} {
 		if strings.Contains(body, unwanted) {
