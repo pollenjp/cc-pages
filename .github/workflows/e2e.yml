@@ -1,0 +1,132 @@
+# e2e テスト + PR へのスクリーンショット貼り付け。
+#
+# 雛形は pjp-e2e-screenshot-ci skill の assets/e2e.yml。
+# permissions / concurrency / fork の条件 / if: always() は理由があってその形なので、
+# 変える前に skill の references/mechanism.md を読むこと。
+name: e2e
+
+# paths filter は付けていない。
+#
+# 雛形は「e2e に影響する範囲」を絞る形だが、それは monorepo 向けの最適化。
+# この repo は単一 Go モジュールで、internal/** と main.go と tests/e2e/** を
+# 挙げると実質 repo 全体になる。絞る利得より「なぜか CI が回らない」を
+# 自分で仕込む危険の方が大きいので、全 PR で回す。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# 同一 PR の連続 push では古い run を cancel する。CI 節約だけでなく、
+# スクショブランチと sticky コメントへの並行書き込みを塞ぐのが本命。
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CC_PAGES_ADDR: 127.0.0.1:7788
+  E2E_BASE_URL: http://127.0.0.1:7788
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # スクショブランチへの push
+      pull-requests: write # sticky コメントの upsert
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # テスト対象は go build したバイナリ 1 つ。compose を挟む理由が無い。
+      #
+      # nohup にしているのは step ごとにシェルが終わるため。素の & だと
+      # SIGHUP で死ぬことがあり、「起動しない」とだけ言われて原因が分からなくなる。
+      - name: cc-pages を起動
+        run: |
+          go build -o cc-pages .
+          CC_PAGES_ROOT="$PWD/tests/e2e/fixtures/root" \
+            nohup ./cc-pages serve > /tmp/cc-pages-serve.log 2>&1 &
+
+      # 「立ち上がる前にテストが走って全部落ちる」を防ぐ。
+      # 失敗時にログを出しておくと、CI のログだけで切り分けが終わる。
+      - name: 起動を待つ
+        run: |
+          for _ in $(seq 1 60); do
+            if curl -fsS -o /dev/null "$E2E_BASE_URL/"; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::cc-pages ($E2E_BASE_URL) が起動しない"
+          cat /tmp/cc-pages-serve.log || true
+          exit 1
+
+      # 公式 image で回す (browser + 依存 lib + CJK フォント同梱)。
+      # --network host で、テストは手元実行と同じ URL を踏む。
+      # image の版は package.json の @playwright/test から読む。手で 2 箇所を
+      # 揃えるのは必ず忘れるので、上げるときは package.json だけ触ればよくする。
+      #
+      # E2E_BASE_URL があると playwright.config.ts は webServer を使わない。
+      # image の中に Go は無いので、ここを分けないと必ず落ちる。
+      - name: e2e を実行
+        working-directory: tests/e2e
+        run: |
+          PLAYWRIGHT_VERSION=$(node -p "require('./package.json').devDependencies['@playwright/test']")
+          docker run --rm --network host \
+            -v "$PWD:/work" -w /work \
+            -e CI=true -e E2E_BASE_URL \
+            "mcr.microsoft.com/playwright:v${PLAYWRIGHT_VERSION}-noble" \
+            bash -lc "npm ci && npx playwright test"
+
+      - name: サーバのログ (失敗時の切り分け用)
+        if: failure()
+        run: cat /tmp/cc-pages-serve.log || true
+
+      # スクショ / trace は artifact にも残す。sticky コメントは縮小画像なので、
+      # 原寸で見たいときと trace を開きたいときはこちらから取る。
+      - name: スクリーンショット / trace を artifact に保存
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-artifacts
+          path: |
+            tests/e2e/screenshots/
+            tests/e2e/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # PR の sticky コメント 1 つに最新スクショを貼る。
+      #
+      # if の 3 条件はどれも外さないこと:
+      #   always()                   失敗した run のスクショこそ見たい
+      #   event_name == pull_request push では PR 番号が無い
+      #   head.repo.full_name == …   fork からの PR は token に write が無く、
+      #                              外すと fork PR が毎回赤くなる
+      - name: PR にスクリーンショットをコメント
+        if: >-
+          always() && github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SHOTS_DIR: tests/e2e/screenshots
+          SHOTS_TITLE: diff 着色の e2e スクリーンショット
+          SHOTS_SOURCE: e2e.yml
+          # 既定の 4 列 x 200px だと、1100x1380 の全画面スクショが潰れて
+          # 配色を判断できない。2 列にしてライト/ダークを横に並べる。
+          GRID_COLS: "2"
+          IMG_WIDTH: "420"
+        run: |
+          .github/scripts/pr-screenshots.sh \
+            "${{ github.event.pull_request.number }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            "${{ job.status }}"
+
+      - name: 後片付け
+        if: always()
+        run: pkill -f 'cc-pages serve' || true

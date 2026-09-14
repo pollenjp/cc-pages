@@ -1,0 +1,42 @@
+# Go 側の検査。e2e とは別 workflow にしてある。
+#
+# e2e は docker image を引くぶん遅く、flaky にもなり得る。単体が通っているか
+# だけを速く知りたい場面の方が多いので、落ちたときにどちらの話なのかが
+# 一目で分かる形にする。
+name: go
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: go-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # gofmt は差分を出して落とす。「何が違うのか」を CI のログで完結させる。
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt されていないファイルがある"
+            gofmt -d .
+            exit 1
+          fi
+
+      - run: go vet ./...
+      - run: go test ./...

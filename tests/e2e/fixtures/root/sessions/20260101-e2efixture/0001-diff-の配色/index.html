@@ -1,0 +1,41 @@
+<h1>diff の配色</h1>
+
+<p>このページは e2e の固定 fixture。中身を変えると PR に貼られるスクショも変わる。</p>
+
+<h2>1. git diff をそのまま貼る</h2>
+<pre class="diff"><code>diff --git a/internal/server/render.go b/internal/server/render.go
+index 1a2b3c4..5d6e7f8 100644
+--- a/internal/server/render.go
++++ b/internal/server/render.go
+@@ -97,10 +97,13 @@ func hasIndexHTML(dirPath string) bool {
+ // フラグメントは信頼された入力なので、そのまま埋める。
+ // cc-pages new の直後はまだ書かれていない。
++//
++// 唯一の書き換えが &lt;pre class="diff"&gt; の着色 (diff.go)。
+ func readFragment(dirPath string) template.HTML {
+ 	b, err := os.ReadFile(filepath.Join(dirPath, "index.html"))
+ 	if err != nil {
+ 		return template.HTML(`&lt;p class="empty"&gt;まだ書かれていません。&lt;/p&gt;`)
+ 	}
+-	return template.HTML(b)
++	return template.HTML(colorizeDiffs(b))
+ }
+</code></pre>
+
+<h2>2. 手書きの短い diff（文脈行の先頭に空白が無い形）</h2>
+<pre class="diff"><code>func f() {
+-	return 1
++	return 2
+}
+</code></pre>
+
+<h2>3. 横に長い行（スクロールしても背景が切れないこと）</h2>
+<pre class="diff" id="wide"><code> ctx
+-const old = "この行はとても長い。横スクロールしたときに背景色が途中で切れていないかを確かめるための行で、意味は無い。"
++const new = "こちらも同じくらい長くして、追加行の緑が右端まで続いているかを見る。切れていたら width:max-content が効いていない。"
+</code></pre>
+
+<h2>4. 着色しない pre（従来どおり素通し）</h2>
+<pre id="plain"><code>$ git status
+-- これは diff ではない
+</code></pre>

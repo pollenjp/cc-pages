@@ -1,0 +1,32 @@
+# PR close 時にスクリーンショット用ブランチ (e2e-screenshots/pr-<番号>) を削除する。
+# ブランチは e2e.yml のコメント step が作る。
+#
+# **e2e.yml とセットで置くこと。** 片方だけだと PR ごとのブランチが消えずに溜まり続ける。
+# merge でも close でも走る (types: [closed] は両方を含む)。
+#
+# 置き場所: .github/workflows/<name>-e2e-cleanup.yml
+name: e2e cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+
+jobs:
+  delete-screenshots-branch:
+    runs-on: ubuntu-latest
+    steps:
+      # ブランチが無い場合 (スクショを 1 度も撮らずに閉じた PR) も失敗させない。
+      # ここを `set -e` で落とすと、e2e が回らなかった PR が全部赤くなる。
+      - name: PR 用スクリーンショットブランチを削除
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ref="heads/e2e-screenshots/pr-${{ github.event.pull_request.number }}"
+          if gh api -X DELETE "repos/${{ github.repository }}/git/refs/${ref}"; then
+            echo "deleted ${ref}"
+          else
+            echo "ブランチ無し (何もしない): ${ref}"
+          fi

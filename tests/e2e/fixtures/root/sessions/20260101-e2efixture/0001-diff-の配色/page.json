@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "id": "0001",
+  "title": "diff の配色",
+  "summary": "e2e が撮る固定ページ。中身を変えたらスクショも変わる",
+  "mode": "fragment",
+  "created_at": "2026-01-01T00:00:00Z",
+  "session_id": "e2e-fixture"
+}
