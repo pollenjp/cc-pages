@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "id": "0002",
+  "title": "横に広い図",
+  "summary": "e2e が撮る固定ページ。本文幅トグルの効き目を見るための 1000px の図",
+  "mode": "fragment",
+  "created_at": "2026-01-01T00:01:00Z",
+  "session_id": "e2e-fixture"
+}

@@ -115,7 +115,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SHOTS_DIR: tests/e2e/screenshots
-          SHOTS_TITLE: diff 着色の e2e スクリーンショット
+          SHOTS_TITLE: e2e スクリーンショット
           SHOTS_SOURCE: e2e.yml
           # 既定の 4 列 x 200px だと、1100x1380 の全画面スクショが潰れて
           # 配色を判断できない。2 列にしてライト/ダークを横に並べる。
