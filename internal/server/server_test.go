@@ -138,6 +138,55 @@ func TestStyleCSSServed(t *testing.T) {
 	}
 }
 
+// TestWidthJSServed は本文幅トグルの JS が同一オリジンで配信されることを見る。
+//
+// この 1 ファイルを外部 JS として置くことが、CSP を一切緩めずにトグルを足せる
+// 理由そのもの (script-src は未指定 → default-src 'self' に落ちるので通る)。
+// インライン化すると 'unsafe-inline' が要るようになり、フラグメントに <script> を
+// 書けないという設計の担保 (TestCSPHeader) ごと崩れる。
+func TestWidthJSServed(t *testing.T) {
+	_, h, _ := fixture(t)
+	rec := get(t, h, "/_/width.js")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "cc-pages:width") {
+		t.Errorf("width.js の中身が違う")
+	}
+}
+
+// TestChromeHasWidthToggle は chrome の付く全ページにトグルが出ることを見る。
+func TestChromeHasWidthToggle(t *testing.T) {
+	_, h, _ := fixture(t)
+	for _, path := range []string{"/", "/p/20260829-aaaa/", "/p/20260829-aaaa/0001-notion/"} {
+		body := get(t, h, path).Body.String()
+		for _, want := range []string{`class="widthtoggle"`, "全幅にする", "標準幅にする"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s に %q が無い", path, want)
+			}
+		}
+	}
+}
+
+// TestWidthJSLoadsSynchronouslyInHead は、幅の記憶が最初の描画より前に反映される
+// ことを担保する。
+//
+// <body> より後ろに置いたり defer / async を付けたりすると、52rem で一瞬出てから
+// 全幅に広がる (逆も) ちらつきが必ず出る。見た目だけの話に見えるが、これを防ぐのが
+// 「JS で data-width を立てる」という作りを選んだ唯一の代償なので、字面で縛る。
+func TestWidthJSLoadsSynchronouslyInHead(t *testing.T) {
+	_, h, _ := fixture(t)
+	body := get(t, h, "/").Body.String()
+	const tag = `<script src="/_/width.js"></script>`
+	i := strings.Index(body, tag)
+	if i < 0 {
+		t.Fatalf("width.js の同期読み込みが無い (defer / async を付けていないか)")
+	}
+	if head := strings.Index(body, "</head>"); i > head {
+		t.Errorf("width.js が </head> より後ろにある")
+	}
+}
+
 func TestTemplatesNotServedAsAssets(t *testing.T) {
 	_, h, _ := fixture(t)
 	if rec := get(t, h, "/_/layout.html"); rec.Code == http.StatusOK {
