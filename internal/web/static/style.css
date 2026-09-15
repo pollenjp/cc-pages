@@ -78,3 +78,39 @@ pre.diff .m { color: var(--muted); }
 .metric { font-size: 2rem; font-weight: 700; line-height: 1.2; }
 .scroll { overflow-x: auto; }
 nav.updown { margin-top: 2rem; display: flex; gap: 1rem; justify-content: space-between; }
+/* 画像の拡大 (lightbox.js)。
+   クリックで拡大できるのは <article> の中の画像のうち、<a> に包まれていないもの。
+   この 2 つの条件は lightbox.js の hit() と対になっている。片方だけ変えると、
+   押せそうに見えて何も起きない画像ができる。 */
+article img, article svg { cursor: zoom-in; }
+article a img, article a svg { cursor: auto; }
+/* overlay 本体。dialog は :not([open]) が display:none なので、display は必ず
+   [open] 付きで書くこと。素の dialog.lightbox { display:flex } にすると、
+   閉じている overlay が本文の上に居座る。 */
+dialog.lightbox {
+  position: fixed; inset: 0; margin: 0; padding: 0; border: 0;
+  width: auto; height: auto; max-width: none; max-height: none;
+  overflow: hidden; background: transparent; color: var(--fg);
+  flex-direction: column;
+}
+dialog.lightbox[open] { display: flex; }
+dialog.lightbox::backdrop { background: rgba(0, 0, 0, .6); }
+.lightbox-bar {
+  flex: none; display: flex; gap: .8rem; align-items: center; justify-content: flex-end;
+  padding: .6rem 1rem; background: var(--bg); border-bottom: 1px solid var(--line);
+}
+/* 画像を載せる枠。原寸のときは、はみ出した分をここがスクロールする。
+   safe を付けるのは、中身が枠より大きいときの center が左 (上) 側をはみ出させ、
+   そちら側へスクロールして戻れなくなるため。 */
+.lightbox-stage {
+  flex: 1; overflow: auto;
+  display: flex; align-items: safe center; justify-content: safe center;
+}
+/* 画像の下地は本文と同じ色にする。透過の inline SVG を暗幕の上へ直に置くと、
+   本文では読めていた図が overlay でだけ読めなくなる。
+   flex: none が要る。原寸のときの幅 (lightbox.js が style に書く) は枠より
+   大きいので、既定の flex-shrink:1 のままだと枠の幅まで縮められてしまう。
+   <img> は replaced element の自動最小サイズに守られて縮まないが、inline SVG は
+   そうならず、「原寸にしたのに縮んだまま」になる。 */
+.lightbox-media { background: var(--bg); cursor: zoom-in; flex: none; }
+dialog.lightbox[data-zoom="actual"] .lightbox-media { cursor: zoom-out; }

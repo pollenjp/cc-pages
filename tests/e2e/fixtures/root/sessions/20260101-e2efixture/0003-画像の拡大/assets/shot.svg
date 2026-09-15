@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000"
+     font-family="Noto Sans CJK JP, Noto Sans JP, sans-serif">
+  <!-- e2e の固定 fixture。assets/ に置いた画像 (= <img> で貼るもの) の代表。
+       原寸 1600x1000 は e2e の viewport (1100x900) より大きいので、overlay で
+       原寸に切り替えると必ずスクロールが要る。この寸法は lightbox.spec.ts の
+       前提なので、縮めるならテストも一緒に見直すこと。 -->
+  <rect width="1600" height="1000" fill="#ffffff"/>
+  <rect x="1" y="1" width="1598" height="998" fill="none" stroke="#c9c9c9" stroke-width="2"/>
+
+  <rect x="0" y="0" width="1600" height="72" fill="#f3f4f6"/>
+  <line x1="0" y1="72" x2="1600" y2="72" stroke="#c9c9c9" stroke-width="2"/>
+  <circle cx="36" cy="36" r="9" fill="#ef4444"/>
+  <circle cx="66" cy="36" r="9" fill="#f59e0b"/>
+  <circle cx="96" cy="36" r="9" fill="#22c55e"/>
+  <text x="140" y="44" font-size="24" font-weight="700" fill="#1a1a1a">設定 — 取り込み</text>
+
+  <rect x="0" y="72" width="320" height="928" fill="#fafafa"/>
+  <line x1="320" y1="72" x2="320" y2="1000" stroke="#c9c9c9" stroke-width="2"/>
+  <text x="40" y="140" font-size="22" fill="#6b6b6b">一般</text>
+  <rect x="20" y="170" width="280" height="44" rx="8" fill="#dbeafe"/>
+  <text x="40" y="200" font-size="22" font-weight="700" fill="#2563eb">取り込み</text>
+  <text x="40" y="260" font-size="22" fill="#6b6b6b">保存先</text>
+  <text x="40" y="320" font-size="22" fill="#6b6b6b">表示</text>
+  <text x="40" y="380" font-size="22" fill="#6b6b6b">詳細</text>
+
+  <text x="380" y="150" font-size="28" font-weight="700" fill="#1a1a1a">取り込みの設定</text>
+
+  <rect x="380" y="200" width="1160" height="120" rx="10" fill="#fafafa" stroke="#e2e2e2" stroke-width="2"/>
+  <text x="410" y="248" font-size="22" font-weight="700" fill="#1a1a1a">走査の間隔</text>
+  <text x="410" y="288" font-size="20" fill="#6b6b6b">5 秒ごとにページディレクトリの変更を拾う</text>
+
+  <rect x="380" y="350" width="1160" height="120" rx="10" fill="#fafafa" stroke="#e2e2e2" stroke-width="2"/>
+  <text x="410" y="398" font-size="22" font-weight="700" fill="#1a1a1a">データ root</text>
+  <text x="410" y="438" font-size="20" fill="#6b6b6b">~/.local/share/cc-pages</text>
+
+  <rect x="380" y="500" width="1160" height="120" rx="10" fill="#fafafa" stroke="#e2e2e2" stroke-width="2"/>
+  <text x="410" y="548" font-size="22" font-weight="700" fill="#1a1a1a">待ち受け</text>
+  <text x="410" y="588" font-size="20" fill="#6b6b6b">127.0.0.1:7777</text>
+
+  <rect x="380" y="650" width="1160" height="200" rx="10" fill="#f0f6ff" stroke="#93c5fd" stroke-width="3"/>
+  <text x="410" y="700" font-size="22" font-weight="700" fill="#1a4ed8">この角が読めていれば原寸</text>
+  <text x="410" y="744" font-size="20" fill="#1a1a1a">縮小表示ではこの行は潰れて読めない。overlay で原寸に</text>
+  <text x="410" y="784" font-size="20" fill="#1a1a1a">切り替えたときだけ、はっきり読める大きさになる。</text>
+
+  <text x="1540" y="960" font-size="20" text-anchor="end" fill="#6b6b6b">1600 x 1000</text>
+</svg>
