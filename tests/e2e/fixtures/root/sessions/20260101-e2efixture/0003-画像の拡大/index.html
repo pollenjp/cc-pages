@@ -1,0 +1,50 @@
+<h1>画像の拡大</h1>
+
+<p>このページは e2e の固定 fixture。中身を変えると PR に貼られるスクショも変わる。
+図をクリックすると overlay で拡大でき、overlay から画像だけを別タブで開ける。</p>
+
+<h2>1. assets の画像</h2>
+
+<p><code>assets/</code> に置いた画像を <code>&lt;img&gt;</code> で貼ったもの。別タブでは
+<code>/p/&hellip;/assets/shot.svg</code> がそのまま開く。</p>
+
+<p><img src="assets/shot.svg" alt="設定画面のスクリーンショット" style="max-width:100%"></p>
+
+<h2>2. inline SVG の図</h2>
+
+<p>フラグメントに直接書いた <code>&lt;svg&gt;</code>。単体のファイルが無いので、別タブは
+その場で組み立てた <code>blob:</code> を開く。色は <code>currentColor</code> なので
+ライトでもダークでも本文と同じ見え方になる。</p>
+
+<svg id="flow-figure" viewBox="0 0 1400 700" width="1400" height="700"
+     style="max-width:100%; height:auto" role="img" aria-label="取り込みの流れ">
+  <g fill="none" stroke="currentColor" stroke-width="3">
+    <rect x="40" y="260" width="360" height="160" rx="12"/>
+    <rect x="520" y="260" width="360" height="160" rx="12"/>
+    <rect x="1000" y="260" width="360" height="160" rx="12"/>
+    <path d="M400 340 H520"/>
+    <path d="M880 340 H1000"/>
+  </g>
+  <g fill="currentColor" stroke="none">
+    <path d="M520 340 l-18 -9 v18 z"/>
+    <path d="M1000 340 l-18 -9 v18 z"/>
+  </g>
+  <g fill="currentColor" font-family="Noto Sans CJK JP, Noto Sans JP, sans-serif">
+    <text x="700" y="120" text-anchor="middle" font-size="44" font-weight="700">取り込みの流れ</text>
+    <text x="700" y="180" text-anchor="middle" font-size="26">原寸は 1400 x 700。標準幅の本文枠には入り切らない</text>
+    <text x="220" y="330" text-anchor="middle" font-size="32" font-weight="700">走査</text>
+    <text x="220" y="380" text-anchor="middle" font-size="24">page.json を読む</text>
+    <text x="700" y="330" text-anchor="middle" font-size="32" font-weight="700">索引</text>
+    <text x="700" y="380" text-anchor="middle" font-size="24">メモリに持つ</text>
+    <text x="1180" y="330" text-anchor="middle" font-size="32" font-weight="700">配信</text>
+    <text x="1180" y="380" text-anchor="middle" font-size="24">chrome を被せる</text>
+    <text x="700" y="560" text-anchor="middle" font-size="26">この行が読める大きさなら原寸で見えている</text>
+  </g>
+</svg>
+
+<h2>3. 既にリンクになっている画像</h2>
+
+<p>書き手が自分で <code>&lt;a&gt;</code> に包んだ画像は overlay の対象外。クリックすると
+リンク先へ飛ぶ。</p>
+
+<p><a href="assets/shot.svg"><img src="assets/shot.svg" alt="元の画像へのリンク" width="160"></a></p>

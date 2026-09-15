@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "id": "0003",
+  "title": "画像の拡大",
+  "summary": "e2e が撮る固定ページ。クリックでの拡大と別タブ表示を見るための図 2 枚",
+  "mode": "fragment",
+  "created_at": "2026-01-01T00:02:00Z",
+  "session_id": "e2e-fixture"
+}
