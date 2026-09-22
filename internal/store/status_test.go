@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -165,6 +166,14 @@ func TestUpdateStatusReplacesWhole(t *testing.T) {
 	if !s.UpdatedAt.Equal(later) {
 		t.Errorf("UpdatedAt = %v, want %v", s.UpdatedAt, later)
 	}
+	// ディスク上でも "next": [] ではなくキーごと省かれる (omitempty)。
+	raw, err := os.ReadFile(filepath.Join(sessionPath, StatusFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"next"`) {
+		t.Errorf("空の next がキーごと省かれていない: %s", raw)
+	}
 	sess, err := ReadSession(sessionPath)
 	if err != nil {
 		t.Fatal(err)
@@ -229,5 +238,27 @@ func TestUpdateStatusRejectsBadSession(t *testing.T) {
 		if len(ents) != 0 {
 			t.Errorf("session id %q は拒否されるべきなのに root に何か作られた: %v", sid, ents)
 		}
+	}
+}
+
+func TestCreatePageReusesSessionDirOfStatus(t *testing.T) {
+	root := t.TempDir()
+	got, err := UpdateStatus(root, statusBase, fixedTime(), StatusInput{SessionID: "409bfd08-aaaa", Now: []string{"先に状況だけ"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := CreatePage(root, statusBase, fixedTime().Add(time.Hour), NewPageInput{SessionID: "409bfd08-aaaa", Title: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Dir(res.Dir)
+	if _, err := os.Stat(filepath.Join(sessionPath, StatusFileName)); err != nil {
+		t.Errorf("先に書いた status.json とページが別のディレクトリに割れた: %v", err)
+	}
+	if want := statusBase + "/p/" + filepath.Base(sessionPath) + "/"; got.URL != want {
+		t.Errorf("status の URL = %q, want %q", got.URL, want)
+	}
+	if res.ID != "0001" {
+		t.Errorf("ID = %q, want 0001", res.ID)
 	}
 }

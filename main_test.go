@@ -110,6 +110,9 @@ func TestStatusRejectsBadSession(t *testing.T) {
 	if err := cmdStatus(cfg, []string{"--session", "../x", "--now", "x"}, &out); err == nil {
 		t.Fatal("不正な session id が通った")
 	}
+	if out.Len() != 0 {
+		t.Errorf("失敗したのに stdout に出力がある: %q", out.String())
+	}
 }
 
 func TestRunListsStatusSubcommand(t *testing.T) {
