@@ -106,3 +106,16 @@ func TestListPageDoesNotShowStatus(t *testing.T) {
 		}
 	}
 }
+
+// TestSessionPageHidesZeroUpdatedAt は、手で編集して updated_at が無くなった status.json
+// でも "更新 0001-01-01 …" のような無意味な時刻を出さないことを確認する。
+func TestSessionPageHidesZeroUpdatedAt(t *testing.T) {
+	h := statusFixture(t, &store.Status{Schema: 1, Now: []string{"進行中"}})
+	body := get(t, h, "/p/20260829-aaaa/").Body.String()
+	if !strings.Contains(body, "進行中") {
+		t.Fatalf("now が出ていない")
+	}
+	if strings.Contains(body, "更新 ") || strings.Contains(body, "0001-01-01") {
+		t.Errorf("updated_at が無いのに更新時刻が出ている")
+	}
+}

@@ -15,7 +15,7 @@
     {{if .Now}}<div><h2>現在の状況</h2><ul>{{range .Now}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
     {{if .Next}}<div><h2>次やること</h2><ol>{{range .Next}}<li>{{.}}</li>{{end}}</ol></div>{{end}}
   </div>
-  <div class="meta"><span>更新 {{.UpdatedAt.Format "2006-01-02 15:04"}}</span></div>
+  {{if not .UpdatedAt.IsZero}}<div class="meta"><span>更新 {{.UpdatedAt.Format "2006-01-02 15:04"}}</span></div>{{end}}
 </section>
 {{else}}
 <p class="meta status-empty">状況はまだ書かれていません。</p>
