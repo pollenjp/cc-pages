@@ -6,6 +6,21 @@
   {{if .Session.GitBranch}}<span>{{.Session.GitBranch}}</span>{{end}}
   {{if .Session.Cwd}}<span>{{.Session.Cwd}}</span>{{end}}
 </div>
+{{/* 状況板。cc-pages status が書いた now / next。片方が空ならその枠は出さない。
+     status 自体が無いときは 1 行だけ出す。何も出さないと「無い」のか skill が
+     更新を忘れたのか分からない。 */}}
+{{with .Session.Status}}
+<section class="status">
+  <div class="cols">
+    {{if .Now}}<div><h2>現在の状況</h2><ul>{{range .Now}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+    {{if .Next}}<div><h2>次やること</h2><ol>{{range .Next}}<li>{{.}}</li>{{end}}</ol></div>{{end}}
+  </div>
+  <div class="meta"><span>更新 {{.UpdatedAt.Format "2006-01-02 15:04"}}</span></div>
+</section>
+{{else}}
+<p class="meta status-empty">状況はまだ書かれていません。</p>
+{{end}}
+<h2>ページ</h2>
 <ol>
 {{range .Session.Pages}}
   <li><a href="/p/{{$.Session.DirName}}/{{.DirName}}/">{{.Title}}</a>

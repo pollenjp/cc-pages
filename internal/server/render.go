@@ -21,6 +21,17 @@ type sessionRow struct {
 	Bytes     int64
 	LastSeen  time.Time
 	Pages     []pageRow
+	Status    *statusRow // 無ければ nil。session.html が {{with}} で分岐する
+}
+
+// statusRow はセッションの「現在の状況」。テンプレートに渡す形。
+//
+// 項目は素の string のまま渡す。フラグメント (index.html) は template.HTML で
+// 信頼するが、こちらは html/template に普通にエスケープさせる。
+type statusRow struct {
+	Now       []string
+	Next      []string
+	UpdatedAt time.Time
 }
 
 // pageRow はセッション内の 1 ページ。テンプレートに渡す形。
@@ -61,6 +72,9 @@ func toRow(v index.SessionView) sessionRow {
 			DirName: p.DirName, Title: p.Title,
 			Summary: p.Summary, CreatedAt: p.CreatedAt,
 		})
+	}
+	if v.Status != nil {
+		r.Status = &statusRow{Now: v.Status.Now, Next: v.Status.Next, UpdatedAt: v.Status.UpdatedAt}
 	}
 	return r
 }
