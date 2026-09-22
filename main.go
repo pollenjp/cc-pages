@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -30,7 +31,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("サブコマンドが要る (new / serve)")
+		return fmt.Errorf("サブコマンドが要る (new / serve / status)")
 	}
 	cfg, err := loadConfig()
 	if err != nil {
@@ -41,6 +42,8 @@ func run(args []string) error {
 		return cmdNew(cfg, args[1:])
 	case "serve":
 		return cmdServe(cfg, args[1:])
+	case "status":
+		return cmdStatus(cfg, args[1:], os.Stdout)
 	default:
 		return fmt.Errorf("不明なサブコマンド: %s", args[0])
 	}
@@ -55,11 +58,11 @@ func loadConfig() (config.Config, error) {
 	return config.Load(os.Getenv, config.DefaultConfigPath(home), home)
 }
 
-// tagList は繰り返し指定できる --tag を受ける。
-type tagList []string
+// multiFlag は繰り返し指定できる文字列のフラグ (--tag / --now / --next)。
+type multiFlag []string
 
-func (t *tagList) String() string     { return fmt.Sprint([]string(*t)) }
-func (t *tagList) Set(v string) error { *t = append(*t, v); return nil }
+func (m *multiFlag) String() string     { return fmt.Sprint([]string(*m)) }
+func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
 // cmdNew はページディレクトリを作り、{"id","dir","url"} を stdout に出す。
 func cmdNew(cfg config.Config, args []string) error {
@@ -70,7 +73,7 @@ func cmdNew(cfg config.Config, args []string) error {
 		summary = fs.String("summary", "", "一覧に出る 1 行")
 		prompt  = fs.String("prompt", "", "元になった依頼")
 		mode    = fs.String("mode", "", "fragment (既定) または standalone")
-		tags    tagList
+		tags    multiFlag
 	)
 	fs.Var(&tags, "tag", "タグ (繰り返し指定できる)")
 	if err := fs.Parse(args); err != nil {
@@ -91,6 +94,36 @@ func cmdNew(cfg config.Config, args []string) error {
 	store.NotifyTouch(cfg.BaseURL())
 	enc := json.NewEncoder(os.Stdout)
 	return enc.Encode(res)
+}
+
+// cmdStatus はセッションの「現在の状況」を全置換で書き、{"url"} を out に出す。
+//
+// out を引数に取るのはテストのため (cmdNew は os.Stdout に直接書いている)。
+// 検証エラーのときは out に何も書かない。skill は stdout を JSON として読むので、
+// 失敗時に半端な出力を残さない。
+func cmdStatus(cfg config.Config, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	var (
+		session = fs.String("session", "", "セッション ID (CLAUDE_CODE_SESSION_ID)")
+		now     multiFlag
+		next    multiFlag
+	)
+	fs.Var(&now, "now", "現在の状況 (繰り返し指定できる)")
+	fs.Var(&next, "next", "次やること (繰り返し指定できる)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	res, err := store.UpdateStatus(cfg.Root, cfg.BaseURL(), time.Now(), store.StatusInput{
+		SessionID: *session,
+		Now:       now,
+		Next:      next,
+	})
+	if err != nil {
+		return err
+	}
+	store.NotifyTouch(cfg.BaseURL())
+	return json.NewEncoder(out).Encode(res)
 }
 
 // cmdServe は索引を作り、HTTP サーバを起動する。
