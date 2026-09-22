@@ -31,6 +31,16 @@ type SessionEntry struct {
 
 	// Bytes は配下のページディレクトリの合計サイズ。session.json は含まない。
 	Bytes int64
+
+	// Status はセッション直下の status.json。無い / 壊れている / 空なら nil。
+	Status *Status
+
+	// StatusModTime は status.json の mtime。無ければゼロ値。差分判定に使う。
+	//
+	// status.json の上書きもセッションディレクトリの mtime を動かさない。
+	// cc-pages status は毎回 touch を送るが、届かなかったときに定期走査が
+	// 永久に取りこぼさないよう、これも見る。
+	StatusModTime time.Time
 }
 
 // Scan は sessionsDir を走査する。
@@ -62,7 +72,8 @@ func Scan(sessionsDir string, prev map[string]SessionEntry) (map[string]SessionE
 			continue
 		}
 		if old, ok := prev[e.Name()]; ok && old.ModTime.Equal(fi.ModTime()) &&
-			!maxPageModTime(dirPath).After(old.PageModTime) {
+			!maxPageModTime(dirPath).After(old.PageModTime) &&
+			statusModTime(dirPath).Equal(old.StatusModTime) {
 			out[e.Name()] = old
 			continue
 		}
@@ -79,6 +90,13 @@ func readSession(dirPath, dirName string, modTime time.Time) SessionEntry {
 	}
 	if entry.Session.Dir == "" {
 		entry.Session.Dir = dirName
+	}
+
+	// status.json。mtime は中身を読む前に採る (ページと同じ理由)。
+	// 壊れていれば黙って飛ばし、now も next も無いものは「無い」扱いにする。
+	entry.StatusModTime = statusModTime(dirPath)
+	if s, err := ReadStatus(dirPath); err == nil && !s.Empty() {
+		entry.Status = &s
 	}
 
 	ents, err := os.ReadDir(dirPath)

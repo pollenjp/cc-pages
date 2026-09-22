@@ -127,3 +127,17 @@ func cleanItems(items []string) []string {
 	}
 	return out
 }
+
+// statusModTime は dir/status.json の mtime を返す。無ければゼロ値。
+//
+// Scan の差分判定用。status.json の上書きはセッションディレクトリの mtime を
+// 動かさない (動くのは作成・削除のときだけ) ので、これも見ないと上書きが
+// 定期走査から永久に見えない。削除されたときはゼロ値になり、前回の値と
+// 食い違うのでやはり読み直す。
+func statusModTime(dir string) time.Time {
+	fi, err := os.Stat(filepath.Join(dir, StatusFileName))
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
+}
