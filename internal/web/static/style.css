@@ -47,6 +47,14 @@ input[type=search] {
 .session ol { margin: .6rem 0 0; padding-left: 1.4rem; }
 .session ol li { margin: .15rem 0; }
 .empty { color: var(--muted); padding: 3rem 0; text-align: center; }
+/* セッションの状況板 (session.html)。cc-pages status が書いた now / next を
+   2 枠で出す。枠は .cards と同じ見た目に揃える。.cols なので片方だけなら
+   横いっぱいに、狭い画面では縦に落ちる。 */
+.status { margin: 1rem 0 1.5rem; }
+.status .cols > div { border: 1px solid var(--line); border-radius: .5rem; padding: .7rem .9rem; background: var(--card); }
+.status h2 { margin: 0 0 .4rem; font-size: 1rem; }
+.status ul, .status ol { margin: 0; padding-left: 1.3rem; }
+.status .meta { margin-top: .5rem; }
 table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
 th, td { border: 1px solid var(--line); padding: .4rem .6rem; text-align: left; }
 th { background: var(--card); }

@@ -148,3 +148,48 @@ func TestSessionLookup(t *testing.T) {
 		t.Error("無いセッションが引けてしまった")
 	}
 }
+
+func TestStatusCopiedToView(t *testing.T) {
+	e := entry("a", "sa", "T", at(9))
+	e.Status = &store.Status{Schema: 1, Now: []string{"進行中"}, Next: []string{"次"}, UpdatedAt: at(10)}
+	ix := New()
+	ix.Replace(map[string]store.SessionEntry{"a": e}, nil)
+	v := ix.Sessions()[0]
+	if v.Status == nil {
+		t.Fatal("Status が写っていない")
+	}
+	if len(v.Status.Now) != 1 || v.Status.Now[0] != "進行中" || len(v.Status.Next) != 1 || v.Status.Next[0] != "次" {
+		t.Errorf("Status = %+v", *v.Status)
+	}
+	if !v.Status.UpdatedAt.Equal(at(10)) {
+		t.Errorf("UpdatedAt = %v, want %v", v.Status.UpdatedAt, at(10))
+	}
+	// 表示時刻は索引を作るここでローカルタイムに揃える (buildView の流儀)
+	if v.Status.UpdatedAt.Location() != time.Local {
+		t.Errorf("UpdatedAt がローカルタイムになっていない: %v", v.Status.UpdatedAt.Location())
+	}
+}
+
+func TestStatusAbsentIsNil(t *testing.T) {
+	ix := New()
+	ix.Replace(map[string]store.SessionEntry{"a": entry("a", "sa", "T", at(9))}, nil)
+	if v := ix.Sessions()[0]; v.Status != nil {
+		t.Errorf("status が無いのに nil ではない: %+v", *v.Status)
+	}
+}
+
+func TestSearchMatchesStatusText(t *testing.T) {
+	a := entry("a", "sa", "x", at(9))
+	a.Status = &store.Status{Schema: 1, Now: []string{"認証まわりを調査中"}, Next: []string{"トークン更新を直す"}, UpdatedAt: at(9)}
+	ix := New()
+	ix.Replace(map[string]store.SessionEntry{
+		"a": a,
+		"b": entry("b", "sb", "y", at(10)),
+	}, nil)
+	for _, q := range []string{"認証", "トークン更新"} {
+		got := ix.Search(q)
+		if len(got) != 1 || got[0].DirName != "a" {
+			t.Errorf("Search(%q) = %v, want 1 件で a", q, got)
+		}
+	}
+}

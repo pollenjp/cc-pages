@@ -27,6 +27,13 @@ type PageView struct {
 	DirPath   string
 }
 
+// StatusView はセッションの「現在の状況」(status.json 由来)。
+type StatusView struct {
+	Now       []string
+	Next      []string
+	UpdatedAt time.Time
+}
+
 // SessionView は一覧に出す 1 セッション分。
 type SessionView struct {
 	DirName   string
@@ -37,6 +44,7 @@ type SessionView struct {
 	Bytes     int64
 	LastSeen  time.Time
 	Pages     []PageView
+	Status    *StatusView // 無ければ nil
 }
 
 // Index はメモリ上の索引。Replace と読み出しは並行に呼ばれる。
@@ -97,6 +105,11 @@ func buildView(e store.SessionEntry, m transcript.Meta) SessionView {
 			CreatedAt: p.Page.CreatedAt.Local(), Mode: p.Page.Mode, DirPath: p.DirPath,
 		})
 	}
+	// 状況。Scan が空のものを nil にしているが、テストなどで直接組んだ entry の
+	// ために Empty も見る。時刻はここでローカルに揃える (LastSeen と同じ理由)。
+	if s := e.Status; s != nil && !s.Empty() {
+		v.Status = &StatusView{Now: s.Now, Next: s.Next, UpdatedAt: s.UpdatedAt.Local()}
+	}
 	// jsonl 由来のメタが取れていればそちらを優先する。
 	if m.AITitle != "" {
 		v.Title = m.AITitle
@@ -121,7 +134,8 @@ func buildView(e store.SessionEntry, m transcript.Meta) SessionView {
 
 // buildHaystack は検索対象を 1 本の小文字文字列に潰す。
 //
-// 対象はタイトル・cwd・ブランチと、各ページのタイトル・要約・タグ・元プロンプト。
+// 対象はタイトル・cwd・ブランチ・状況 (now / next) と、各ページのタイトル・要約・
+// タグ・元プロンプト。
 // 本文 (index.html) は含めない。常時の索引を軽く保つため。
 func buildHaystack(v SessionView) string {
 	var b strings.Builder
@@ -140,6 +154,17 @@ func buildHaystack(v SessionView) string {
 		for _, t := range p.Tags {
 			b.WriteByte('\n')
 			b.WriteString(t)
+		}
+	}
+	// 状況の文言でも引けるようにする。
+	if v.Status != nil {
+		for _, s := range v.Status.Now {
+			b.WriteByte('\n')
+			b.WriteString(s)
+		}
+		for _, s := range v.Status.Next {
+			b.WriteByte('\n')
+			b.WriteString(s)
 		}
 	}
 	return strings.ToLower(b.String())

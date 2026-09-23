@@ -15,7 +15,7 @@
   <a href="/">cc-pages</a>
   <span class="crumb">{{if .SessionURL}}<a href="{{.SessionURL}}">{{.SessionTitle}}</a> / {{end}}{{.Crumb}}</span>
   {{if .ShowSearch}}<form method="get" action="/" style="display:contents">
-    <input type="search" name="q" value="{{.Query}}" placeholder="タイトル・要約・タグ・依頼・cwd・ブランチ" autofocus>
+    <input type="search" name="q" value="{{.Query}}" placeholder="タイトル・要約・タグ・依頼・状況・cwd・ブランチ" autofocus>
   </form>{{end}}
   <button type="button" class="widthtoggle"><span class="to-full">全幅にする</span><span class="to-narrow">標準幅にする</span></button>
   <form method="post" action="/_/touch" style="display:contents">

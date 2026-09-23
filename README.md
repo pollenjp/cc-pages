@@ -14,6 +14,14 @@ Claude Code の長い応答を HTML としてローカルに残し、web で読�
 `new` が返す `dir` に `index.html`（`<body>` の中身に相当するフラグメント）を書き、
 `url` をブラウザで開く。
 
+    cc-pages status --session "$CLAUDE_CODE_SESSION_ID" \
+      --now "調査が終わり案 A で合意" --next "spec を commit する"
+
+`status` はセッション直下の `status.json` を丸ごと書き換え（全置換）、セッションの
+ページ一覧 `/p/<session>/` の上に「現在の状況」「次やること」として出す。`--now` と
+`--next` は繰り返し指定でき、どちらか 1 つは要る。ページより先に打ってもよい。
+`status.json` が無いセッションは「状況はまだ書かれていません。」と出る。
+
 `--mode standalone` を付けると `index.html` を完全な HTML 文書として扱い、
 ページの URL でそのまま返す（共通 CSS もナビも被せない）。その文書にだけ
 インライン `<script>` を許す CSP を返すので、JS が要るページはこちらへ逃がす。
@@ -62,3 +70,6 @@ mermaid の描画、引用のクリップボードコピー、systemd socket act
 
 設計は `claude-skills`（private）の
 `docs/superpowers/specs/2026-08-29-cc-pages-design.md` にある。
+
+状況板 (`cc-pages status`) の設計はこの repo の
+`docs/superpowers/specs/2026-09-22-session-status-design.md` にある。
