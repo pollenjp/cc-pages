@@ -168,10 +168,15 @@ var (
 	cssClass   = regexp.MustCompile(`\.([A-Za-z_-][A-Za-z0-9_-]*)`)
 )
 
-// cssSelectorClasses は CSS の selector に現れるクラス名の集合を返す。
+// cssSelectorClasses は CSS の rule で、selector の主語に現れるクラス名の集合を返す。
 //
 // コメントと宣言の中は見ない。style.css のコメントは「.cards と同じ見た目」のように
 // クラス名を挙げるので、全文を検索すると、消えたクラスを見逃す。
+//
+// 数えるのは、, で区切った各 selector の一番右の複合 selector (主語) だけ。
+// .status .cols > div の .cols のように祖先の位置にだけ出るクラスは、その要素
+// 自身には何も当てていないので、.cols { } が消えたことを見逃さないよう数えない。
+// @media などの @ で始まる prelude も selector ではないので飛ばす。
 func cssSelectorClasses(css string) map[string]bool {
 	css = cssComment.ReplaceAllString(css, "")
 	classes := map[string]bool{}
@@ -179,15 +184,31 @@ func cssSelectorClasses(css string) map[string]bool {
 	for i, r := range css {
 		switch r {
 		case '{':
-			for _, m := range cssClass.FindAllStringSubmatch(css[start:i], -1) {
-				classes[m[1]] = true
-			}
+			prelude := strings.TrimSpace(css[start:i])
 			start = i + 1
+			if strings.HasPrefix(prelude, "@") {
+				continue
+			}
+			for _, sel := range strings.Split(prelude, ",") {
+				for _, m := range cssClass.FindAllStringSubmatch(selectorSubject(sel), -1) {
+					classes[m[1]] = true
+				}
+			}
 		case '}', ';':
 			start = i + 1
 		}
 	}
 	return classes
+}
+
+// selectorSubject は selector の一番右の複合 selector を返す。結合子 (空白・> + ~)
+// より後ろの部分で、その rule が実際に当たる要素を表す。
+func selectorSubject(sel string) string {
+	sel = strings.TrimSpace(sel)
+	if i := strings.LastIndexAny(sel, " \t\n>+~"); i >= 0 {
+		return sel[i+1:]
+	}
+	return sel
 }
 
 // skillFiles は skillGlobs に当たるファイルを返す。1 つも無ければ止める。
@@ -277,8 +298,11 @@ func TestTableClasses(t *testing.T) {
 func TestCSSSelectorClasses(t *testing.T) {
 	css := strings.Join([]string{
 		"/* 枠は .gone と同じ見た目にする */",
+		"pre.diff { padding: 0; }",
 		"pre.diff .a { background: var(--diff-add-bg); }",
 		".note, .warn { border-left: 4px solid; }",
+		".status .cols > div { margin: 0; }",
+		".cards > * { padding: 1rem; }",
 		"@media (prefers-color-scheme: dark) {",
 		"  .ok { color: green; }",
 		"}",
@@ -291,6 +315,13 @@ func TestCSSSelectorClasses(t *testing.T) {
 	}
 	if got["gone"] {
 		t.Error("コメントの中の .gone を selector と見なした")
+	}
+	// 祖先の位置にだけ出るクラスは、その要素自身には何も当てていない。
+	// .cols { } が消えても .status .cols > div が残っていれば通る、を起こさない。
+	for _, c := range []string{"status", "cols", "cards"} {
+		if got[c] {
+			t.Errorf("祖先の位置にだけ出る .%s を数えた (%v)", c, got)
+		}
 	}
 	if cssSelectorClasses(".diff-add { color: red; }")["diff"] {
 		t.Error(".diff-add を .diff と見なした")
