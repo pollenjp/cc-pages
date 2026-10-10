@@ -406,3 +406,33 @@ func TestSkillEnvVarsDocumented(t *testing.T) {
 		}
 	}
 }
+
+// screenshotArg は chromium の --screenshot= に渡す書き先。
+var screenshotArg = regexp.MustCompile(`--screenshot="?([^"\s]+)`)
+
+// TestSkillScreenshotsOutsideCwd は、skill が見た目の確認で撮らせるスクショの
+// 書き先が相対パスでないことを確かめる。相対パスだと、利用者が作業している
+// repo の中に画像が残る。
+func TestSkillScreenshotsOutsideCwd(t *testing.T) {
+	for _, path := range skillFiles(t) {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inFence := false
+		for i, line := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "```") {
+				inFence = !inFence
+				continue
+			}
+			if !inFence {
+				continue
+			}
+			for _, m := range screenshotArg.FindAllStringSubmatch(line, -1) {
+				if dst := m[1]; !strings.HasPrefix(dst, "/") && !strings.HasPrefix(dst, "$") && !strings.HasPrefix(dst, "~") {
+					t.Errorf("%s L%d: --screenshot=%s は作業中の repo に書く。$HOME/tmp など repo の外に向ける", path, i+1, dst)
+				}
+			}
+		}
+	}
+}

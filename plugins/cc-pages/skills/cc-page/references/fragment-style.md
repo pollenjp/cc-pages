@@ -299,11 +299,14 @@ SVG に文字を置くと幅の見積もりがズレて**衝突・はみ出し�
 chromium 等でスクショを撮って自分の目で確認してから返す:
 
 ```sh
+mkdir -p "$HOME/tmp"
 chromium --headless --disable-gpu --window-size=1200,3000 --hide-scrollbars \
-  --screenshot=check.png "$URL"
+  --screenshot="$HOME/tmp/cc-page-check.png" "$URL"
 ```
 
-(snap 版 chromium は `/tmp` と dot-dir に書けない。`~/tmp` 等の非隠しディレクトリで実行する)
+- スクショは作業中の repo の外に書き、見終えたら消す。repo に画像を残さない
+- snap 版 chromium は `/tmp` と dot-dir に書けないので、上の例のように `~/tmp` 等の非隠しディレクトリへ書く
+- chromium (や Chrome) が手元に無ければ、この確認は省いてよい。入れに行かない
 
 ## standalone モード（完全な HTML）
 
