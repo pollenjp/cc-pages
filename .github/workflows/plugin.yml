@@ -1,0 +1,48 @@
+# plugin (plugins/cc-pages) と marketplace (.claude-plugin/) の検査。
+#
+# go.yml とは別 workflow にしてある。こちらは Claude Code の CLI を npm から
+# 取ってくるぶん遅く、落ちる理由も Go の単体とは違う。落ちたときにどちらの
+# 話なのかが一目で分かる形にする。
+name: plugin
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plugin-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # CI の中で CLI に自分を更新させない。版は下の CLAUDE_CODE で固定している。
+  DISABLE_AUTOUPDATER: "1"
+  # stable の dist-tag で、公開から 7 日以上経った版 (2.1.287 は 2026-10-01 公開)。
+  # 上げるときも同じ基準で選ぶ。
+  CLAUDE_CODE: "@anthropic-ai/claude-code@2.1.287"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # @anthropic-ai/claude-code は engines で node >= 22 を求める。runner に
+      # 最初から入っている node の版には頼らない。
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+
+      # 認証は要らない。--strict は付けない。plugin に version を書かない
+      # 決まりなので、「version が無い」警告で必ず落ちる。
+      - name: marketplace を検証
+        run: npx --yes "$CLAUDE_CODE" plugin validate .
+
+      # marketplace の検証は、plugin の skill のファイルを開かない。
+      # SKILL.md の frontmatter まで見るには、plugin のディレクトリを別に流す。
+      - name: plugin を検証
+        run: npx --yes "$CLAUDE_CODE" plugin validate plugins/cc-pages

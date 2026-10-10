@@ -1,0 +1,8 @@
+{
+  "name": "cc-pages",
+  "description": "長い応答を cc-pages のページに書き出し、ターミナルには短い箇条書きとリンクだけを返す skill",
+  "author": { "name": "pollenjp" },
+  "homepage": "https://github.com/pollenjp/cc-pages",
+  "repository": "https://github.com/pollenjp/cc-pages",
+  "license": "MIT"
+}
