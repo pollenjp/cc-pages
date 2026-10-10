@@ -107,6 +107,7 @@ CI は公式の playwright image を使うので flake を必要としない
 | --- | --- | --- |
 | bind | `127.0.0.1:7777` | `CC_PAGES_ADDR` / `~/.config/cc-pages/config.toml` の `addr` |
 | データ root | `~/.local/share/cc-pages` | `CC_PAGES_ROOT` / 同 `root` |
+| skill がページを書く | 書く | `CC_PAGES_DISABLE` を設定すると書かない。skill だけが見る (binary は見ない) |
 
 ## まだ無いもの
 

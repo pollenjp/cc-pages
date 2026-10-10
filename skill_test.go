@@ -377,3 +377,32 @@ func TestSkillClassesExistInCSS(t *testing.T) {
 		}
 	}
 }
+
+// ccPagesEnv は skill が名指しする cc-pages の環境変数 (CC_PAGES_ROOT など)。
+var ccPagesEnv = regexp.MustCompile(`\bCC_PAGES_[A-Z][A-Z_]*\b`)
+
+// TestSkillEnvVarsDocumented は skill が名指しする CC_PAGES_* の環境変数が、
+// README.md にも書いてあることを確かめる。skill だけが知っている切り替えは、
+// 利用者からは見つけようがない。
+func TestSkillEnvVarsDocumented(t *testing.T) {
+	readme, err := os.ReadFile("README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range skillFiles(t) {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]bool{}
+		for _, v := range ccPagesEnv.FindAllString(string(b), -1) {
+			if seen[v] {
+				continue
+			}
+			seen[v] = true
+			if !strings.Contains(string(readme), v) {
+				t.Errorf("%s の %s が README.md に無い", path, v)
+			}
+		}
+	}
+}
