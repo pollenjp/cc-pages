@@ -64,30 +64,29 @@ type multiFlag []string
 func (m *multiFlag) String() string     { return fmt.Sprint([]string(*m)) }
 func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
+// newFlags は new の FlagSet を作り、各 flag を in のフィールドに結びつける。
+//
+// cmdNew から出してあるのは、skill_test.go が skill に書いた flag の実在を
+// 同じ定義で確かめるため。flag を足すときはここに足せば、両方に効く。
+func newFlags(in *store.NewPageInput) *flag.FlagSet {
+	fs := flag.NewFlagSet("new", flag.ContinueOnError)
+	fs.StringVar(&in.SessionID, "session", "", "セッション ID (CLAUDE_CODE_SESSION_ID)")
+	fs.StringVar(&in.Title, "title", "", "ページのタイトル")
+	fs.StringVar(&in.Summary, "summary", "", "一覧に出る 1 行")
+	fs.StringVar(&in.Prompt, "prompt", "", "元になった依頼")
+	fs.StringVar(&in.Mode, "mode", "", "fragment (既定) または standalone")
+	fs.Var((*multiFlag)(&in.Tags), "tag", "タグ (繰り返し指定できる)")
+	return fs
+}
+
 // cmdNew はページディレクトリを作り、{"id","dir","url"} を stdout に出す。
 func cmdNew(cfg config.Config, args []string) error {
-	fs := flag.NewFlagSet("new", flag.ContinueOnError)
-	var (
-		session = fs.String("session", "", "セッション ID (CLAUDE_CODE_SESSION_ID)")
-		title   = fs.String("title", "", "ページのタイトル")
-		summary = fs.String("summary", "", "一覧に出る 1 行")
-		prompt  = fs.String("prompt", "", "元になった依頼")
-		mode    = fs.String("mode", "", "fragment (既定) または standalone")
-		tags    multiFlag
-	)
-	fs.Var(&tags, "tag", "タグ (繰り返し指定できる)")
-	if err := fs.Parse(args); err != nil {
+	var in store.NewPageInput
+	if err := newFlags(&in).Parse(args); err != nil {
 		return err
 	}
 
-	res, err := store.CreatePage(cfg.Root, cfg.BaseURL(), time.Now(), store.NewPageInput{
-		SessionID: *session,
-		Title:     *title,
-		Summary:   *summary,
-		Tags:      tags,
-		Prompt:    *prompt,
-		Mode:      *mode,
-	})
+	res, err := store.CreatePage(cfg.Root, cfg.BaseURL(), time.Now(), in)
 	if err != nil {
 		return err
 	}
@@ -96,29 +95,28 @@ func cmdNew(cfg config.Config, args []string) error {
 	return enc.Encode(res)
 }
 
+// statusFlags は status の FlagSet を作り、各 flag を in のフィールドに結びつける。
+// cmdStatus から出してある理由は newFlags と同じ。
+func statusFlags(in *store.StatusInput) *flag.FlagSet {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.StringVar(&in.SessionID, "session", "", "セッション ID (CLAUDE_CODE_SESSION_ID)")
+	fs.Var((*multiFlag)(&in.Now), "now", "現在の状況 (繰り返し指定できる)")
+	fs.Var((*multiFlag)(&in.Next), "next", "次やること (繰り返し指定できる)")
+	return fs
+}
+
 // cmdStatus はセッションの「現在の状況」を全置換で書き、{"url"} を out に出す。
 //
 // out を引数に取るのはテストのため (cmdNew は os.Stdout に直接書いている)。
 // 検証エラーのときは out に何も書かない。skill は stdout を JSON として読むので、
 // 失敗時に半端な出力を残さない。
 func cmdStatus(cfg config.Config, args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	var (
-		session = fs.String("session", "", "セッション ID (CLAUDE_CODE_SESSION_ID)")
-		now     multiFlag
-		next    multiFlag
-	)
-	fs.Var(&now, "now", "現在の状況 (繰り返し指定できる)")
-	fs.Var(&next, "next", "次やること (繰り返し指定できる)")
-	if err := fs.Parse(args); err != nil {
+	var in store.StatusInput
+	if err := statusFlags(&in).Parse(args); err != nil {
 		return err
 	}
 
-	res, err := store.UpdateStatus(cfg.Root, cfg.BaseURL(), time.Now(), store.StatusInput{
-		SessionID: *session,
-		Now:       now,
-		Next:      next,
-	})
+	res, err := store.UpdateStatus(cfg.Root, cfg.BaseURL(), time.Now(), in)
 	if err != nil {
 		return err
 	}
