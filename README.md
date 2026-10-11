@@ -41,6 +41,51 @@ inline SVG も対象。最初は画面に収まる大きさで開き、もう一
 フラグメントの `<pre class="diff">` は、行頭の `+` / `-` / `@@` を見て 1 行ずつ
 色を付けて返す。diff は生のまま貼ればよく、`<span>` を自分で巻く必要はない。
 
+## Claude Code に使わせる
+
+この repo は Claude Code の plugin の marketplace も兼ねる。plugin `cc-pages` を入れると、
+skill `cc-page` が長い応答をページに書き出し、ターミナルには短い箇条書きとリンクだけを返す。
+
+    /plugin install cc-pages --marketplace pollenjp/cc-pages
+
+この 1 行で入るのは Claude Code 2.1.275 以降。それより古い版では、marketplace の追加と
+install を分ける。シェルからは `claude plugin marketplace add pollenjp/cc-pages` と
+`claude plugin install cc-pages@cc-pages` の 2 つ。
+
+    /plugin marketplace add pollenjp/cc-pages
+    /plugin install cc-pages@cc-pages
+
+skill は依頼の中身を見て自分で動く。明示して呼ぶときは `/cc-pages:cc-page`。
+`cc-pages` の binary が PATH に無いあいだは、ページを作らずにターミナルで答える。
+
+自前の marketplace は自動更新が既定で off なので、更新は手で取りに行く。効くのは
+`/reload-plugins` か再起動のあと。
+
+    claude plugin marketplace update cc-pages
+    claude plugin update cc-pages@cc-pages
+
+skill は main を追うので、binary も pull して build し直す。binary の方が古いと、skill は
+ページを作らずに答え、build し直すよう 1 行添える。
+
+skill は図を多めに描くよう指示している。図を描く skill を一緒に入れておくと、描ける図の
+種類が増える。PlantUML や draw.io で図を SVG に焼く skill、数値をグラフにする skill、
+1 手ずつ送れる図を作る skill などが合う。無ければ inline SVG で描く。
+
+自分用に直したいときは、`plugins/cc-pages/skills/cc-page/` を `~/.claude/skills/<名前>/` に
+写し、`SKILL.md` の `name` もその名前に変えて、plugin は外す
+(`claude plugin uninstall cc-pages@cc-pages`)。両方を残すと、同じ場面で 2 つが起動する。
+
+skill を直すときは、`claude --plugin-dir ./plugins/cc-pages` で 1 セッションだけ読み込んで
+試せる。検査は repo 直下と plugin のディレクトリの 2 か所で流す。marketplace の検査は
+skill のファイルを開かないため。CI (`.github/workflows/plugin.yml`) も同じ 2 つを流す。
+
+    claude plugin validate .
+    claude plugin validate plugins/cc-pages
+
+CLI の flag・サブコマンドや fragment のクラスを変えるときは、同じ PR で skill も直す。
+`skill_test.go` が、skill のコマンド例の flag と「使えるクラス」の表を、CLI と CSS に
+突き合わせる。
+
 ## e2e
 
 `tests/e2e/` に Playwright のテストがある。diff の着色を実ブラウザで検査し、
@@ -62,6 +107,7 @@ CI は公式の playwright image を使うので flake を必要としない
 | --- | --- | --- |
 | bind | `127.0.0.1:7777` | `CC_PAGES_ADDR` / `~/.config/cc-pages/config.toml` の `addr` |
 | データ root | `~/.local/share/cc-pages` | `CC_PAGES_ROOT` / 同 `root` |
+| skill がページを書く | 書く | `CC_PAGES_DISABLE` を設定すると書かない。skill だけが見る (binary は見ない) |
 
 ## まだ無いもの
 
@@ -73,3 +119,6 @@ mermaid の描画、引用のクリップボードコピー、systemd socket act
 
 状況板 (`cc-pages status`) の設計はこの repo の
 `docs/superpowers/specs/2026-09-22-session-status-design.md` にある。
+
+plugin と skill (`plugins/cc-pages/`) の設計はこの repo の
+`docs/superpowers/specs/2026-10-10-sample-skill-plugin-design.md` にある。

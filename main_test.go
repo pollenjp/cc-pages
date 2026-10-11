@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -120,4 +122,79 @@ func TestRunListsStatusSubcommand(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "status") {
 		t.Errorf("サブコマンド無しのエラーに status が載っていない: %v", err)
 	}
+}
+
+// TestNewFlagsFillInput は newFlags が各 flag を NewPageInput のフィールドに
+// 結びつけることを確かめる。cmdNew はこの in をそのまま store.CreatePage に
+// 渡すので、結びつけがずれると flag が黙って捨てられる。
+func TestNewFlagsFillInput(t *testing.T) {
+	var in store.NewPageInput
+	err := newFlags(&in).Parse([]string{
+		"--session", "409bfd08-aaaa",
+		"--title", "題",
+		"--summary", "一覧の 1 行",
+		"--tag", "調査", "--tag", "Go",
+		"--prompt", "元の依頼",
+		"--mode", "standalone",
+	})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	want := store.NewPageInput{
+		SessionID: "409bfd08-aaaa",
+		Title:     "題",
+		Summary:   "一覧の 1 行",
+		Tags:      []string{"調査", "Go"},
+		Prompt:    "元の依頼",
+		Mode:      "standalone",
+	}
+	if !reflect.DeepEqual(in, want) {
+		t.Errorf("in = %+v, want %+v", in, want)
+	}
+}
+
+func TestStatusFlagsFillInput(t *testing.T) {
+	var in store.StatusInput
+	err := statusFlags(&in).Parse([]string{
+		"--session", "409bfd08-aaaa",
+		"--now", "進行中",
+		"--next", "次にやる", "--next", "その次",
+	})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	want := store.StatusInput{
+		SessionID: "409bfd08-aaaa",
+		Now:       []string{"進行中"},
+		Next:      []string{"次にやる", "その次"},
+	}
+	if !reflect.DeepEqual(in, want) {
+		t.Errorf("in = %+v, want %+v", in, want)
+	}
+}
+
+// TestOldBinaryErrorTexts は、skill が「binary が skill より古い」と見分けるのに
+// 使う 2 つの文言を固定する。
+//
+// skill は main を追い、利用者の binary は build した日のまま残る。今日の binary も
+// いずれ誰かの手元で「古い binary」になるので、ここの文言を変えると、その日の
+// skill がずれを見分けられなくなる。
+func TestOldBinaryErrorTexts(t *testing.T) {
+	t.Run("知らない flag", func(t *testing.T) {
+		fs := newFlags(&store.NewPageInput{})
+		fs.SetOutput(io.Discard)
+		err := fs.Parse([]string{"--no-such-flag", "x"})
+		if err == nil || !strings.Contains(err.Error(), "flag provided but not defined") {
+			t.Errorf("err = %v, want \"flag provided but not defined\" を含む", err)
+		}
+	})
+	t.Run("知らないサブコマンド", func(t *testing.T) {
+		// run は先に設定を読む。手元の ~/.config/cc-pages/config.toml に左右されないよう
+		// HOME を空のディレクトリに向ける。
+		t.Setenv("HOME", t.TempDir())
+		err := run([]string{"no-such-subcommand"})
+		if err == nil || !strings.Contains(err.Error(), "不明なサブコマンド") {
+			t.Errorf("err = %v, want \"不明なサブコマンド\" を含む", err)
+		}
+	})
 }
