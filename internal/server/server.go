@@ -37,9 +37,10 @@ type Server struct {
 	refresh        func()
 	refreshSession func(dirName string)
 
-	listTmpl    *template.Template
-	sessionTmpl *template.Template
-	pageTmpl    *template.Template
+	listTmpl     *template.Template
+	sessionTmpl  *template.Template
+	pageTmpl     *template.Template
+	notFoundTmpl *template.Template
 }
 
 // New はサーバを組み立てる。
@@ -63,6 +64,7 @@ func New(cfg config.Config, ix *index.Index, refresh func(), refreshSession func
 		listTmpl:       parseTemplate("list.html"),
 		sessionTmpl:    parseTemplate("session.html"),
 		pageTmpl:       parseTemplate("page.html"),
+		notFoundTmpl:   parseTemplate("notfound.html"),
 	}
 }
 
@@ -73,6 +75,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /_/touch", s.handleTouch)
 	mux.HandleFunc("POST /_/touch/{session}", s.handleTouchSession)
 	mux.HandleFunc("GET /{$}", s.handleList)
+	mux.HandleFunc("GET /s/{session}/{$}", s.handleSessionByID)
+	mux.HandleFunc("GET /s/{session}", s.handleSessionByID)
 	mux.HandleFunc("GET /p/{session}/{$}", s.handleSession)
 	mux.HandleFunc("GET /p/{session}/{page}/assets/{path...}", s.handleAsset)
 	mux.HandleFunc("GET /p/{session}/{page}/{$}", s.handlePage)
@@ -142,6 +146,43 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	s.render(w, s.sessionTmpl, pageData{
 		Title: row.Title, Crumb: row.Title, Session: &row,
 	})
+}
+
+// handleSessionByID は session id から会話のトップページ (/p/<session>/) へ送る。
+//
+// Claude Code の status line は session id しか知らないので、会話のディレクトリ名
+// (日付-session id の先頭) を組み立てずに開ける入口を用意する。末尾の "/" の有る無しは
+// 同じに扱い、直接トップページへ送る。
+//
+// 索引に無ければディスクも探す。cc-pages link の知らせが serve に届かなかったとき
+// (serve の再起動中など) でも、定期走査を待たずに入口が開くようにする。見つかれば
+// その会話を読み直させてから送る。
+//
+// 見つからない・session id の文字が new の検証に通らないときは 404 のページを出す。
+// 302 にしないのは、会話がまだ何も書いていないことが分かるようにするため。
+func (s *Server) handleSessionByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("session")
+	if id == "" || store.ValidateSessionID(id) != nil {
+		s.notFoundSession(w)
+		return
+	}
+	dir := ""
+	if v, ok := s.ix.SessionByID(id); ok {
+		dir = v.DirName
+	} else if d, ok := store.FindSessionDir(s.cfg.SessionsDir(), id); ok {
+		s.refreshSession(d)
+		dir = d
+	}
+	if dir == "" {
+		s.notFoundSession(w)
+		return
+	}
+	http.Redirect(w, r, sessionURL(dir), http.StatusFound)
+}
+
+// notFoundSession は /s/ で会話が見つからないときの 404 のページを出す。
+func (s *Server) notFoundSession(w http.ResponseWriter) {
+	s.renderStatus(w, s.notFoundTmpl, pageData{Title: "cc-pages"}, http.StatusNotFound)
 }
 
 // handlePage は 1 ページを出す。fragment は chrome で包み、standalone は
@@ -302,11 +343,17 @@ func (s *Server) handleAsset(w http.ResponseWriter, r *http.Request) {
 // 壊れた出力に追記されるだけになる (Task 7 レビュー指摘)。バッファに通すことで、
 // 失敗時は w に何も書かずに 500 を返せる。
 func (s *Server) render(w http.ResponseWriter, t *template.Template, d pageData) {
+	s.renderStatus(w, t, d, http.StatusOK)
+}
+
+// renderStatus は render と同じく組み立ててから、code で返す (/s/ の 404 のページ用)。
+func (s *Server) renderStatus(w http.ResponseWriter, t *template.Template, d pageData, code int) {
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "layout", d); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(code)
 	_, _ = buf.WriteTo(w) // クライアント切断など書き込み側のエラーはもう手当てしようがない
 }
