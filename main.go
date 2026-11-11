@@ -31,7 +31,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("サブコマンドが要る (new / serve / status)")
+		return fmt.Errorf("サブコマンドが要る (new / serve / status / link)")
 	}
 	cfg, err := loadConfig()
 	if err != nil {
@@ -44,6 +44,8 @@ func run(args []string) error {
 		return cmdServe(cfg, args[1:])
 	case "status":
 		return cmdStatus(cfg, args[1:], os.Stdout)
+	case "link":
+		return cmdLink(cfg, args[1:], os.Stdin, os.Stdout, os.Stderr)
 	default:
 		return fmt.Errorf("不明なサブコマンド: %s", args[0])
 	}
@@ -122,6 +124,98 @@ func cmdStatus(cfg config.Config, args []string, out io.Writer) error {
 	}
 	store.NotifyTouch(cfg.BaseURL())
 	return json.NewEncoder(out).Encode(res)
+}
+
+// linkArgs は cc-pages link の flag。
+type linkArgs struct {
+	SessionID string
+	Stdin     bool
+	URL       string
+	Label     string
+	Group     string
+	Source    string
+	At        string
+}
+
+// linkFlags は link の FlagSet を作り、各 flag を a のフィールドに結びつける。
+// cmdLink から出してある理由は newFlags と同じ (flag の定義を 1 か所にする)。
+func linkFlags(a *linkArgs) *flag.FlagSet {
+	fs := flag.NewFlagSet("link", flag.ContinueOnError)
+	fs.StringVar(&a.SessionID, "session", "", "セッション ID (CLAUDE_CODE_SESSION_ID)")
+	fs.BoolVar(&a.Stdin, "stdin", false, "標準入力から JSON Lines (1 行 1 件) を読む")
+	fs.StringVar(&a.URL, "url", "", "足すリンクの URL (http か https の絶対 URL)")
+	fs.StringVar(&a.Label, "label", "", "表示の文字 (無ければ URL を出す)")
+	fs.StringVar(&a.Group, "group", "", "組の名前 (無ければ その他)")
+	fs.StringVar(&a.Source, "source", "", "assistant (既定) か tool")
+	fs.StringVar(&a.At, "at", "", "リンクが出た時刻 (RFC 3339。無ければ今)")
+	return fs
+}
+
+// cmdLink は会話にリンクを足し、{"url","added","updated","skipped"} を stdout に出す。
+//
+// 呼ぶ側 (Claude Code の Stop hook) は --stdin で、会話に出たリンクを JSON Lines で
+// まとめて渡す。読めない行は理由を stderr に出して捨て、ほかの行は残す (1 件のために
+// 全部を落とすと、turn ごとの取り逃しが続く)。手で 1 件を足すときは --url などで渡し、
+// それを捨てるなら失敗にする (status の検証エラーと同じく stdout に何も書かない)。
+//
+// 足したら serve に知らせ、その会話だけを読み直させる。知らせの応答は待たない。
+func cmdLink(cfg config.Config, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	var a linkArgs
+	fs := linkFlags(&a)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("余分な引数がある: %q", fs.Args())
+	}
+	// stdin を読む前に確かめる。拒むなら入力を待たせない。
+	if a.SessionID == "" {
+		return errors.New("--session が要る")
+	}
+	if err := store.ValidateSessionID(a.SessionID); err != nil {
+		return err
+	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	switch {
+	case a.Stdin && set["url"]:
+		return errors.New("--stdin と --url は一緒に使えない")
+	case !a.Stdin && !set["url"]:
+		return errors.New("--stdin か --url のどちらかが要る")
+	case a.Stdin:
+		for _, name := range []string{"label", "group", "source", "at"} {
+			if set[name] {
+				return fmt.Errorf("--%s は --url と一緒に使う (--stdin では JSON Lines のキーで渡す)", name)
+			}
+		}
+	}
+
+	now := time.Now()
+	warn := func(s string) { fmt.Fprintln(stderr, "cc-pages link:", s) }
+	var items []store.LinkInput
+	skipped := 0
+	if a.Stdin {
+		items, skipped = store.ParseLinkLines(stdin, now, warn)
+	} else {
+		in, err := store.NewLinkInput(a.URL, a.Label, a.Group, a.Source, a.At, now)
+		if err != nil {
+			return err
+		}
+		items = []store.LinkInput{in}
+	}
+
+	res, err := store.AddLinks(cfg.Root, cfg.BaseURL(), now, a.SessionID, items, warn)
+	if err != nil {
+		return err
+	}
+	if !a.Stdin && res.Skipped > 0 {
+		return fmt.Errorf("リンクを足せなかった (1 つの会話に残すのは %d 件まで)", store.MaxLinks)
+	}
+	res.Skipped += skipped
+	if res.Changed {
+		store.NotifySession(cfg.BaseURL(), res.Dir)
+	}
+	return json.NewEncoder(stdout).Encode(res)
 }
 
 // cmdServe は索引を作り、HTTP サーバを起動する。

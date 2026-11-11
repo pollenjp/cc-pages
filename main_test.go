@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -197,4 +199,228 @@ func TestOldBinaryErrorTexts(t *testing.T) {
 			t.Errorf("err = %v, want \"不明なサブコマンド\" を含む", err)
 		}
 	})
+}
+
+// runLink は cmdLink を stdin を渡して打ち、stdout と stderr を返す。
+func runLink(t *testing.T, cfg config.Config, stdin string, args ...string) (string, string, error) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	err := cmdLink(cfg, args, strings.NewReader(stdin), &out, &errOut)
+	return out.String(), errOut.String(), err
+}
+
+// linkOut は cc-pages link の stdout の JSON。
+type linkOut struct {
+	URL     string `json:"url"`
+	Added   int    `json:"added"`
+	Updated int    `json:"updated"`
+	Skipped int    `json:"skipped"`
+}
+
+func decodeLinkOut(t *testing.T, out string) linkOut {
+	t.Helper()
+	if strings.Count(out, "\n") != 1 || !strings.HasSuffix(out, "\n") {
+		t.Fatalf("stdout が 1 行ではない: %q", out)
+	}
+	var keys map[string]any
+	if err := json.Unmarshal([]byte(out), &keys); err != nil {
+		t.Fatalf("stdout が JSON ではない: %q", out)
+	}
+	if len(keys) != 4 {
+		t.Errorf("stdout のキー = %v, want url・added・updated・skipped の 4 つだけ", keys)
+	}
+	var res linkOut
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+// onlySessionDir は root/sessions にある 1 つだけの会話のディレクトリを返す。
+func onlySessionDir(t *testing.T, root string) string {
+	t.Helper()
+	ents, err := os.ReadDir(filepath.Join(root, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 1 {
+		t.Fatalf("会話のディレクトリ数 = %d, want 1", len(ents))
+	}
+	return ents[0].Name()
+}
+
+func TestLinkStdinWritesAndPrintsJSON(t *testing.T) {
+	cfg := statusCfg(t)
+	in := strings.Join([]string{
+		`{"url":"https://github.com/o/r/pull/12","label":"r#12","group":"PR"}`,
+		`{"url":"javascript:x"}`,
+		`{"url":"https://app.notion.com/p/abc","label":"TKT-12","group":"チケット","source":"tool","at":"2026-11-11T15:06:01Z"}`,
+	}, "\n") + "\n"
+	out, errOut, err := runLink(t, cfg, in, "--session", "409bfd08-aaaa", "--stdin")
+	if err != nil {
+		t.Fatalf("cmdLink() error = %v (stderr: %s)", err, errOut)
+	}
+	res := decodeLinkOut(t, out)
+	dir := onlySessionDir(t, cfg.Root)
+	want := linkOut{URL: "http://localhost:1/p/" + dir + "/", Added: 2, Skipped: 1}
+	if res != want {
+		t.Errorf("stdout = %+v, want %+v", res, want)
+	}
+	// 捨てた行は、行番号と理由を stderr に 1 行ずつ
+	if !strings.Contains(errOut, "2 行目") || !strings.Contains(errOut, "http(s)") {
+		t.Errorf("stderr = %q, want 2 行目とその理由", errOut)
+	}
+	l, err := store.ReadLinks(filepath.Join(cfg.Root, "sessions", dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Links) != 2 || l.Links[1].Label != "TKT-12" || !reflect.DeepEqual(l.Links[1].Sources, []string{"tool"}) {
+		t.Errorf("links.json = %+v", l.Links)
+	}
+}
+
+func TestLinkFlagsSingleItem(t *testing.T) {
+	cfg := statusCfg(t)
+	out, errOut, err := runLink(t, cfg, "", "--session", "409bfd08-aaaa",
+		"--url", "https://github.com/o/r/pull/12", "--label", "r#12", "--group", "PR",
+		"--source", "tool", "--at", "2026-11-11T15:06:01Z")
+	if err != nil {
+		t.Fatalf("cmdLink() error = %v (stderr: %s)", err, errOut)
+	}
+	if res := decodeLinkOut(t, out); res.Added != 1 {
+		t.Errorf("stdout = %+v, want added 1", res)
+	}
+	l, err := store.ReadLinks(filepath.Join(cfg.Root, "sessions", onlySessionDir(t, cfg.Root)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Links) != 1 {
+		t.Fatalf("links.json = %+v", l.Links)
+	}
+	got := l.Links[0]
+	if got.URL != "https://github.com/o/r/pull/12" || got.Label != "r#12" || got.Group != "PR" ||
+		!reflect.DeepEqual(got.Sources, []string{"tool"}) ||
+		!got.FirstSeen.Equal(time.Date(2026, 11, 11, 15, 6, 1, 0, time.UTC)) {
+		t.Errorf("Links[0] = %+v", got)
+	}
+}
+
+// TestLinkFlagBadItemFails は、flag で渡した 1 件を捨てるときは失敗にすることを
+// 確かめる (status の検証エラーと同じ扱い)。stdout は JSON として読まれるので何も書かない。
+func TestLinkFlagBadItemFails(t *testing.T) {
+	cfg := statusCfg(t)
+	out, _, err := runLink(t, cfg, "", "--session", "409bfd08-aaaa", "--url", "javascript:x")
+	if err == nil {
+		t.Fatal("http(s) でない URL が通った")
+	}
+	if out != "" {
+		t.Errorf("失敗したのに stdout に出力がある: %q", out)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Root, "sessions")); !os.IsNotExist(err) {
+		t.Errorf("失敗したのに sessions を作った")
+	}
+}
+
+func TestLinkFlagErrors(t *testing.T) {
+	const line = `{"url":"https://a/"}` + "\n"
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"--stdin も --url も無い", []string{"--session", "409bfd08-aaaa"}},
+		{"両方ある", []string{"--session", "409bfd08-aaaa", "--stdin", "--url", "https://a/"}},
+		{"--stdin と --label", []string{"--session", "409bfd08-aaaa", "--stdin", "--label", "x"}},
+		{"--session が無い", []string{"--url", "https://a/"}},
+		{"使えない session id", []string{"--session", "../x", "--url", "https://a/"}},
+		{"余分な引数", []string{"--session", "409bfd08-aaaa", "--stdin", "extra"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := statusCfg(t)
+			out, _, err := runLink(t, cfg, line, c.args...)
+			if err == nil {
+				t.Errorf("%v が通った", c.args)
+			}
+			if out != "" {
+				t.Errorf("失敗したのに stdout に出力がある: %q", out)
+			}
+		})
+	}
+}
+
+// TestLinkEmptyStdinCreatesNothing は、渡すリンクが無い turn にも呼ぶ側が打つことを
+// 想定する。会話のディレクトリを作らず、一覧に空の会話を増やさない。
+func TestLinkEmptyStdinCreatesNothing(t *testing.T) {
+	cfg := statusCfg(t)
+	out, errOut, err := runLink(t, cfg, "", "--session", "409bfd08-aaaa", "--stdin")
+	if err != nil {
+		t.Fatalf("cmdLink() error = %v (stderr: %s)", err, errOut)
+	}
+	if res, want := decodeLinkOut(t, out), (linkOut{URL: "http://localhost:1/s/409bfd08-aaaa/"}); res != want {
+		t.Errorf("stdout = %+v, want %+v", res, want)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Root, "sessions")); !os.IsNotExist(err) {
+		t.Errorf("空の入力で sessions を作った")
+	}
+}
+
+// TestLinkNotifiesServe は、足したら動いている serve にその会話だけを読み直させる
+// こと、何も変わらなければ知らせないことを確かめる。
+func TestLinkNotifiesServe(t *testing.T) {
+	got := make(chan string, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- r.Method + " " + r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	cfg := config.Config{Addr: srv.Listener.Addr().String(), Root: t.TempDir()}
+	// at を渡す。無ければ「今」が入り、2 回目は最後の時刻が進んで変わったことになる
+	const in = `{"url":"https://github.com/o/r/pull/12","at":"2026-11-11T15:06:01Z"}` + "\n"
+
+	if _, errOut, err := runLink(t, cfg, in, "--session", "409bfd08-aaaa", "--stdin"); err != nil {
+		t.Fatalf("cmdLink() error = %v (stderr: %s)", err, errOut)
+	}
+	select {
+	case v := <-got:
+		if want := "POST /_/touch/" + onlySessionDir(t, cfg.Root); v != want {
+			t.Errorf("知らせ = %q, want %q", v, want)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("serve に知らせていない")
+	}
+
+	if _, errOut, err := runLink(t, cfg, in, "--session", "409bfd08-aaaa", "--stdin"); err != nil {
+		t.Fatalf("2 回目の cmdLink() error = %v (stderr: %s)", err, errOut)
+	}
+	select {
+	case v := <-got:
+		t.Errorf("何も変わっていないのに知らせた: %q", v)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestLinkFlagsFillInput(t *testing.T) {
+	var a linkArgs
+	err := linkFlags(&a).Parse([]string{
+		"--session", "409bfd08-aaaa", "--stdin",
+		"--url", "https://a/", "--label", "r#12", "--group", "PR",
+		"--source", "tool", "--at", "2026-11-11T15:06:01Z",
+	})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	want := linkArgs{
+		SessionID: "409bfd08-aaaa", Stdin: true, URL: "https://a/", Label: "r#12",
+		Group: "PR", Source: "tool", At: "2026-11-11T15:06:01Z",
+	}
+	if a != want {
+		t.Errorf("a = %+v, want %+v", a, want)
+	}
+}
+
+func TestRunListsLinkSubcommand(t *testing.T) {
+	err := run(nil)
+	if err == nil || !strings.Contains(err.Error(), "link") {
+		t.Errorf("サブコマンド無しのエラーに link が載っていない: %v", err)
+	}
 }
