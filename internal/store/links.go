@@ -115,7 +115,7 @@ type LinkInput struct {
 // 制御文字を落とし、長さを切る。既定と同じ値 (URL と同じ label・「その他」の group)
 // は空に寄せる。空なら後から来た件の値で埋める、というまとめ方の規則に乗せるため。
 func NewLinkInput(rawURL, label, group, source, at string, now time.Time) (LinkInput, error) {
-	u, err := checkLinkURL(rawURL)
+	u, err := CheckLinkURL(rawURL)
 	if err != nil {
 		return LinkInput{}, err
 	}
@@ -149,12 +149,13 @@ func NewLinkInput(rawURL, label, group, source, at string, now time.Time) (LinkI
 	return in, nil
 }
 
-// checkLinkURL は URL が http(s) の絶対 URL かを確かめ、前後の空白を落とした形を返す。
+// CheckLinkURL は URL が http(s) の絶対 URL かを確かめ、前後の空白を落とした形を返す。
 //
-// 中の空白と制御文字も拒む。url.Parse はパスの空白を通すが、それは呼ぶ側が URL の
+// serve も「リンク」の節を描くときに同じ規則で確かめ直す (links.json は手で書き換え
+// られる) ので export してある。中の空白と制御文字も拒む。url.Parse はパスの空白を通すが、それは呼ぶ側が URL の
 // 切り出しを誤ったときに起きる。日本語などの非 ASCII は通す (cc-pages new の URL は
 // パスの日本語を %XX に潰さない)。
-func checkLinkURL(raw string) (string, error) {
+func CheckLinkURL(raw string) (string, error) {
 	u := strings.TrimSpace(raw)
 	if u == "" {
 		return "", errors.New("url が無い")

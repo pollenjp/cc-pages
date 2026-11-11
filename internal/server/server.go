@@ -144,7 +144,7 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	row := toRow(v)
 	s.render(w, s.sessionTmpl, pageData{
-		Title: row.Title, Crumb: row.Title, Session: &row,
+		Title: row.Title, Crumb: row.Title, Session: &row, Links: s.buildLinks(v),
 	})
 }
 

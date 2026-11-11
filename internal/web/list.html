@@ -7,6 +7,7 @@
   <div class="meta">
     <span>{{$sess.LastSeen.Format "2006-01-02 15:04"}}</span>
     <span>{{$sess.PageCount}} ページ</span>
+    {{if $sess.LinkCount}}<span>{{$sess.LinkCount}} リンク</span>{{end}}
     {{if $sess.GitBranch}}<span>{{$sess.GitBranch}}</span>{{end}}
     {{if $sess.Cwd}}<span>{{$sess.Cwd}}</span>{{end}}
     <span>{{humanBytes $sess.Bytes}}</span>
