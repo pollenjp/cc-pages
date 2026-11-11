@@ -55,7 +55,7 @@ func realFixture(t *testing.T, fragment string, pageDirs ...string) http.Handler
 			Pages:   pages,
 		},
 	}, nil)
-	return New(config.Config{Addr: "127.0.0.1:7777", Root: root}, ix, func() {}).Handler()
+	return New(config.Config{Addr: "127.0.0.1:7777", Root: root}, ix, func() {}, nil).Handler()
 }
 
 func TestPageRendersFragmentInsideChrome(t *testing.T) {
@@ -106,7 +106,7 @@ func TestPageMissingIndexHTMLShowsPlaceholder(t *testing.T) {
 			}},
 		},
 	}, nil)
-	h := New(config.Config{Root: root}, ix, func() {}).Handler()
+	h := New(config.Config{Root: root}, ix, func() {}, nil).Handler()
 	rec := get(t, h, "/p/20260829-aaaa/0001-mada/")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (書きかけでも 500 にしない)", rec.Code)
@@ -307,7 +307,7 @@ func TestAssetsDoNotFollowSymlinksOutside(t *testing.T) {
 			}},
 		},
 	}, nil)
-	h := New(config.Config{Addr: "127.0.0.1:7777", Root: root}, ix, func() {}).Handler()
+	h := New(config.Config{Addr: "127.0.0.1:7777", Root: root}, ix, func() {}, nil).Handler()
 
 	for _, name := range []string{"link-rel", "link-abs"} {
 		rec := get(t, h, "/p/20260829-aaaa/0001-alpha/assets/"+name)
@@ -473,7 +473,7 @@ func TestRenderWritesNothingOnTemplateFailure(t *testing.T) {
 	// 実行時エラーになる。
 	tmpl := template.Must(template.New("layout").Parse(partial + "{{.Boom}}"))
 
-	s := New(config.Config{}, index.New(), func() {})
+	s := New(config.Config{}, index.New(), func() {}, nil)
 	rec := httptest.NewRecorder()
 	s.render(rec, tmpl, pageData{})
 

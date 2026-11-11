@@ -23,6 +23,9 @@ type Refresher struct {
 	mu    sync.Mutex
 	prev  map[string]store.SessionEntry
 	cache *transcript.Cache
+	// meta は最後の走査で読んだ transcript のメタ。RefreshSession は transcript を
+	// 読まずにこれを使い回す。
+	meta map[string]transcript.Meta
 }
 
 // NewRefresher を作る。projectsDir が無くても動く。
@@ -65,7 +68,31 @@ func (r *Refresher) scan(full bool) {
 		return
 	}
 	r.prev = entries
-	r.ix.Replace(entries, r.cache.Scan(r.projectsDir))
+	r.meta = r.cache.Scan(r.projectsDir)
+	r.ix.Replace(entries, r.meta)
+}
+
+// RefreshSession は 1 つの会話のディレクトリだけを読み直して索引を差し替える。
+//
+// POST /_/touch/{session} — cc-pages link からの知らせ — 用。全体の走査はしない。
+// とくに transcript (~/.claude/projects の jsonl) は読み直さない。変わった transcript を
+// 頭から読み直すのが走査で一番重く、link は turn の終わりごとに知らせてくるため。
+// 題 (aiTitle) などは最後の走査のものを使い、次の定期走査で追いつく。
+//
+// ディレクトリが無くなっていれば、その会話を索引から外す。
+func (r *Refresher) RefreshSession(dirName string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.prev == nil {
+		r.prev = map[string]store.SessionEntry{}
+	}
+	if e, ok := store.ReadSessionEntry(r.sessionsDir, dirName); ok {
+		r.prev[dirName] = e
+	} else {
+		delete(r.prev, dirName)
+	}
+	r.ix.Replace(r.prev, r.meta)
 }
 
 // Run は every ごとに Refresh する。ctx が終わったら戻る。

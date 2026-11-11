@@ -3,7 +3,9 @@ package store
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -294,4 +296,48 @@ func NotifyTouch(baseURL string) {
 		return
 	}
 	_ = resp.Body.Close()
+}
+
+// NotifySession は動いている cc-pages serve に、1 つの会話のディレクトリだけを
+// 読み直させる (cc-pages link の知らせ)。
+//
+// NotifyTouch と違い、応答を待たない。NotifyTouch の受け手は全体の走査を終えてから
+// 返り、全体の走査は変わった transcript (数十〜百数十 MB のものがある) を頭から
+// 読み直す。link は turn の終わりごとに打たれるので、それを待てない。
+// request を書いたら接続を閉じる。閉じても、書いた request は serve に届いて処理される。
+// http.Client で送って書き終えた所で取り消す形にしないのは、本文の無い request だと、
+// 書いたことになった時点ではまだ送り出す前の buffer にあり、取り消すと送られずに
+// 終わりうるため。
+//
+// 届かなくても何もしない。serve が居なければ定期走査で拾われる。
+func NotifySession(baseURL, dirName string) {
+	u, err := url.Parse(strings.TrimRight(baseURL, "/") + "/_/touch/" + url.PathEscape(dirName))
+	if err != nil || u.Host == "" {
+		return
+	}
+	req, err := http.NewRequest(http.MethodPost, u.String(), nil)
+	if err != nil {
+		return
+	}
+	req.Close = true
+	d := net.Dialer{Timeout: 100 * time.Millisecond}
+	conn, err := d.Dial("tcp", hostPort(u))
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	_ = conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+	_ = req.Write(conn)
+}
+
+// hostPort は URL の host:port を返す。port が無ければ scheme の既定。
+func hostPort(u *url.URL) string {
+	if u.Port() != "" {
+		return u.Host
+	}
+	port := "80"
+	if u.Scheme == "https" {
+		port = "443"
+	}
+	return net.JoinHostPort(u.Hostname(), port)
 }

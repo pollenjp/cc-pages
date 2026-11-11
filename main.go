@@ -159,7 +159,8 @@ func cmdServe(cfg config.Config, args []string) error {
 	srv := &http.Server{
 		Addr: cfg.Addr,
 		// touch (cc-pages new / 再読み込みボタン) は差分ではなく全走査。
-		Handler:           server.New(cfg, ix, r.RefreshAll).Handler(),
+		// cc-pages link の知らせはその会話だけを読み直す。
+		Handler:           server.New(cfg, ix, r.RefreshAll, r.RefreshSession).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	// done は shutdown goroutine が Shutdown まで完了したら閉じる。

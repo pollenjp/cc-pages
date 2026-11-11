@@ -32,9 +32,10 @@ const StandaloneCSP = "default-src 'self'; style-src 'self' 'unsafe-inline'; " +
 
 // Server は cc-pages serve の HTTP 側。
 type Server struct {
-	cfg     config.Config
-	ix      *index.Index
-	refresh func()
+	cfg            config.Config
+	ix             *index.Index
+	refresh        func()
+	refreshSession func(dirName string)
 
 	listTmpl    *template.Template
 	sessionTmpl *template.Template
@@ -46,14 +47,22 @@ type Server struct {
 // refresh は POST /_/touch から呼ぶ、索引を強制的に全部読み直す関数
 // (Refresher.RefreshAll)。差分走査を渡すと「再読み込み」ボタンが
 // 定期走査と同じ取りこぼしを共有してしまい、押しても直らなくなる。
-func New(cfg config.Config, ix *index.Index, refresh func()) *Server {
+//
+// refreshSession は POST /_/touch/{session} (cc-pages link の知らせ) から呼ぶ、
+// 1 つの会話のディレクトリだけを読み直す関数 (Refresher.RefreshSession)。
+// nil なら何もしない。
+func New(cfg config.Config, ix *index.Index, refresh func(), refreshSession func(dirName string)) *Server {
+	if refreshSession == nil {
+		refreshSession = func(string) {}
+	}
 	return &Server{
-		cfg:         cfg,
-		ix:          ix,
-		refresh:     refresh,
-		listTmpl:    parseTemplate("list.html"),
-		sessionTmpl: parseTemplate("session.html"),
-		pageTmpl:    parseTemplate("page.html"),
+		cfg:            cfg,
+		ix:             ix,
+		refresh:        refresh,
+		refreshSession: refreshSession,
+		listTmpl:       parseTemplate("list.html"),
+		sessionTmpl:    parseTemplate("session.html"),
+		pageTmpl:       parseTemplate("page.html"),
 	}
 }
 
@@ -62,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /_/", http.StripPrefix("/_/", http.FileServerFS(web.Static)))
 	mux.HandleFunc("POST /_/touch", s.handleTouch)
+	mux.HandleFunc("POST /_/touch/{session}", s.handleTouchSession)
 	mux.HandleFunc("GET /{$}", s.handleList)
 	mux.HandleFunc("GET /p/{session}/{$}", s.handleSession)
 	mux.HandleFunc("GET /p/{session}/{page}/assets/{path...}", s.handleAsset)
@@ -103,6 +113,22 @@ func (s *Server) handleTouch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// handleTouchSession は 1 つの会話のディレクトリだけを読み直す。cc-pages link から
+// 呼ばれる。link は応答を読まずに接続を閉じるので、返す中身に意味は無い。
+//
+// {session} は会話のディレクトリ名。ディレクトリ名は「日付-session id の先頭」で、
+// session id と同じ文字 (文字・数字・"-") しか含まないので、同じ規則で弾く
+// (".." などでディレクトリの外を読ませない)。
+func (s *Server) handleTouchSession(w http.ResponseWriter, r *http.Request) {
+	dir := r.PathValue("session")
+	if dir == "" || store.ValidateSessionID(dir) != nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.refreshSession(dir)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // handleSession はセッション内のページ一覧を出す。

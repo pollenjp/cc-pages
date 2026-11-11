@@ -18,7 +18,7 @@ func statusFixture(t *testing.T, st *store.Status) http.Handler {
 	e.Status = st
 	ix := index.New()
 	ix.Replace(map[string]store.SessionEntry{"20260829-aaaa": e}, nil)
-	return New(config.Config{Addr: "127.0.0.1:7777", Root: "/root"}, ix, func() {}).Handler()
+	return New(config.Config{Addr: "127.0.0.1:7777", Root: "/root"}, ix, func() {}, nil).Handler()
 }
 
 func TestSessionPageShowsStatus(t *testing.T) {

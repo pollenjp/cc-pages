@@ -53,7 +53,7 @@ func standaloneFixtureNamed(t *testing.T, mode, doc, dirName string) http.Handle
 			}},
 		},
 	}, nil)
-	return New(config.Config{Addr: "127.0.0.1:7777", Root: root}, ix, func() {}).Handler()
+	return New(config.Config{Addr: "127.0.0.1:7777", Root: root}, ix, func() {}, nil).Handler()
 }
 
 // TestStandalonePageServesDocumentVerbatim は、standalone ページの URL が
