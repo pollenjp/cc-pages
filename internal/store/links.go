@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -291,4 +292,208 @@ func parseLinkLine(line []byte, now time.Time, maxLine int, tooLong string) (in 
 		return LinkInput{}, err.Error(), false
 	}
 	return in, "", true
+}
+
+const (
+	// linksLockName は links.json を読み・まとめ・書く間だけ握る lock のファイル名。
+	linksLockName = "links.lock"
+	// lockTimeout は lock を待つ上限。ふつうは数 ms で取れる。
+	lockTimeout = 3 * time.Second
+)
+
+// LinkResult は cc-pages link が stdout に出す JSON。
+type LinkResult struct {
+	URL     string `json:"url"`     // 会話のトップページ
+	Added   int    `json:"added"`   // 新しく足した URL の数
+	Updated int    `json:"updated"` // 前からあった URL のうち、時刻か出どころが変わった数
+	Skipped int    `json:"skipped"` // 捨てた件数
+
+	// Dir と Changed は stdout に出さない。cmdLink が serve に知らせるかどうかと、
+	// どの会話を読み直させるかに使う。
+	Dir     string `json:"-"`
+	Changed bool   `json:"-"`
+}
+
+// AddLinks は会話の links.json に items をまとめて書く。
+//
+// 会話のディレクトリが無ければ new・status と同じ規則で作り、session.json の骨も
+// 書く。ただし items が 0 件ならディスクに触らない。呼ぶ側 (Stop hook) はリンクの
+// 無い会話でも打つので、ここで作ると一覧が空の会話で埋まる。そのときの URL は、
+// 会話のディレクトリがあればそのトップページ、無ければ /s/<session_id>/ (後で
+// 何かが書かれればトップページへ飛ぶ入口) を返す。
+//
+// 読み・まとめ・書きは会話のディレクトリの lock の下で行う。同じ会話に 2 つの
+// cc-pages link が同時に来ても、片方の書き込みが消えないようにするため。
+// 何も変わらなければ書かない (呼ぶ側は turn ごとに同じ組を渡し直しうる)。
+//
+// items は NewLinkInput を通ったものを渡す。
+func AddLinks(root, baseURL string, now time.Time, sessionID string, items []LinkInput, warn func(string)) (LinkResult, error) {
+	if sessionID == "" {
+		return LinkResult{}, errors.New("session id が空")
+	}
+	if err := ValidateSessionID(sessionID); err != nil {
+		return LinkResult{}, err
+	}
+	base := strings.TrimRight(baseURL, "/")
+	sessionsDir := filepath.Join(root, "sessions")
+
+	// sessionDirName は日付 + 検証済みの session id の先頭部分なので、そのまま
+	// 連結してよい (CreatePage の URL と同じ理屈)。
+	if len(items) == 0 {
+		if name, ok := FindSessionDir(sessionsDir, sessionID); ok {
+			return LinkResult{URL: base + "/p/" + name + "/", Dir: name}, nil
+		}
+		return LinkResult{URL: base + "/s/" + url.PathEscape(sessionID) + "/"}, nil
+	}
+
+	if err := os.MkdirAll(sessionsDir, 0o700); err != nil {
+		return LinkResult{}, err
+	}
+	name, err := findOrMakeSessionDir(sessionsDir, sessionID, now)
+	if err != nil {
+		return LinkResult{}, err
+	}
+	sessionPath := filepath.Join(sessionsDir, name)
+	res := LinkResult{URL: base + "/p/" + name + "/", Dir: name}
+
+	unlock, err := lockFile(filepath.Join(sessionPath, linksLockName), lockTimeout)
+	if err != nil {
+		return LinkResult{}, err
+	}
+	defer unlock()
+
+	cur, err := loadLinksForUpdate(sessionPath, warn)
+	if err != nil {
+		return LinkResult{}, err
+	}
+	var changed bool
+	res.Added, res.Updated, res.Skipped, changed = mergeLinks(&cur, items, warn)
+	if !changed {
+		return res, nil
+	}
+	cur.Schema = SchemaVersion
+	cur.UpdatedAt = now
+	if err := writeLinks(sessionPath, cur); err != nil {
+		return LinkResult{}, err
+	}
+	// LastSeen を進める。リンクが増えたのも会話の活動なので、一覧で上に来てよい。
+	if err := touchSession(sessionPath, name, sessionID, now); err != nil {
+		return LinkResult{}, err
+	}
+	res.Changed = true
+	return res, nil
+}
+
+// loadLinksForUpdate は書き足す前の links.json を読む。無ければ空。
+//
+// JSON として壊れていれば (手で直そうとして崩したときにしか起きない)、
+// links.json.broken に退けて空から書き直す。呼ぶ側は失敗を黙って捨てるので、
+// 失敗を返し続けると、誰も気づかないままリンクを取り逃す。壊れた中身は消さない。
+func loadLinksForUpdate(dir string, warn func(string)) (Links, error) {
+	l, err := ReadLinks(dir)
+	if err == nil {
+		return l, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return Links{}, nil
+	}
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &syntaxErr) && !errors.As(err, &typeErr) {
+		return Links{}, err // 読めない (権限など)。終了コード 1 にする
+	}
+	path := filepath.Join(dir, LinksFileName)
+	if err := os.Rename(path, path+".broken"); err != nil {
+		return Links{}, err
+	}
+	warn(fmt.Sprintf("links.json が壊れていたので %s に退けて、空から書き直す", path+".broken"))
+	return Links{}, nil
+}
+
+// mergeLinks は items を cur にまとめる。
+//
+// 同じ URL (文字列で比べる) には、最初の時刻は小さい方、最後の時刻は大きい方、
+// 出どころは和を残す。label・group は最初に入ったものを残し、前が空のときだけ
+// 埋める。updated は前からあった URL のうち時刻か出どころが変わった数で、label・
+// group を埋めただけでは数えない (changed は立てて書き直す)。新しい URL は MaxLinks に
+// 達していれば捨てる。保存する時刻はローカルに揃える (status.json と同じく、人が
+// 読んだときに分かる形)。
+func mergeLinks(cur *Links, items []LinkInput, warn func(string)) (added, updated, skipped int, changed bool) {
+	pos := make(map[string]int, len(cur.Links))
+	for i, l := range cur.Links {
+		if _, dup := pos[l.URL]; !dup {
+			pos[l.URL] = i
+		}
+	}
+	preexisting := len(cur.Links) // これより前の添字が「前からあった」URL
+	updatedURL := map[string]bool{}
+
+	for _, in := range items {
+		at := in.At.Local()
+		i, ok := pos[in.URL]
+		if !ok {
+			if len(cur.Links) >= MaxLinks {
+				skipped++
+				warn(fmt.Sprintf("上限 (%d 件) に達しているので足さない: %q", MaxLinks, truncRunes(in.URL, quoteRunes)))
+				continue
+			}
+			cur.Links = append(cur.Links, Link{
+				URL: in.URL, Label: in.Label, Group: in.Group,
+				Sources: []string{in.Source}, FirstSeen: at, LastSeen: at,
+			})
+			pos[in.URL] = len(cur.Links) - 1
+			added++
+			changed = true
+			continue
+		}
+
+		l := &cur.Links[i]
+		moved := false
+		if l.FirstSeen.IsZero() || at.Before(l.FirstSeen) {
+			l.FirstSeen, moved = at, true
+		}
+		if at.After(l.LastSeen) {
+			l.LastSeen, moved = at, true
+		}
+		if srcs, grew := addSource(l.Sources, in.Source); grew {
+			l.Sources, moved = srcs, true
+		}
+		if l.Label == "" && in.Label != "" {
+			l.Label, changed = in.Label, true
+		}
+		if l.Group == "" && in.Group != "" {
+			l.Group, changed = in.Group, true
+		}
+		if moved {
+			changed = true
+			if i < preexisting && !updatedURL[in.URL] {
+				updatedURL[in.URL] = true
+				updated++
+			}
+		}
+	}
+	return added, updated, skipped, changed
+}
+
+// addSource は srcs に s を足した列を返す。並びは assistant, tool の順 (知らない値は
+// 後ろ) に揃え、ファイルの差分が出どころの来た順で揺れないようにする。
+func addSource(srcs []string, s string) ([]string, bool) {
+	for _, x := range srcs {
+		if x == s {
+			return srcs, false
+		}
+	}
+	out := append(append([]string(nil), srcs...), s)
+	sort.SliceStable(out, func(i, j int) bool { return sourceRank(out[i]) < sourceRank(out[j]) })
+	return out, true
+}
+
+func sourceRank(s string) int {
+	switch s {
+	case SourceAssistant:
+		return 0
+	case SourceTool:
+		return 1
+	}
+	return 2
 }

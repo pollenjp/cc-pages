@@ -1,10 +1,12 @@
 package store
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -268,4 +270,367 @@ func TestParseLinkLinesBounds(t *testing.T) {
 			t.Errorf("warn = %q, want 上限の 1 回", warns)
 		}
 	})
+}
+
+const linkBase = "http://localhost:7777"
+
+// jst は時刻を hh:mm で書くための helper。日付は 2026-11-11 に固定する。
+func jst(h, m int) time.Time {
+	return time.Date(2026, 11, 11, h, m, 0, 0, time.FixedZone("JST", 9*3600))
+}
+
+// li は検証済みの 1 件を組み立てる (AddLinks は NewLinkInput を通った件を受け取る)。
+func li(u, label, group, source string, at time.Time) LinkInput {
+	return LinkInput{URL: u, Label: label, Group: group, Source: source, At: at}
+}
+
+// collect は warn の文を貯める。
+func collect(warns *[]string) func(string) {
+	return func(s string) { *warns = append(*warns, s) }
+}
+
+func readLinksAt(t *testing.T, root, dir string) Links {
+	t.Helper()
+	l, err := ReadLinks(filepath.Join(root, "sessions", dir))
+	if err != nil {
+		t.Fatalf("ReadLinks(%s) error = %v", dir, err)
+	}
+	return l
+}
+
+func TestAddLinksCreatesSession(t *testing.T) {
+	root := t.TempDir()
+	var warns []string
+	res, err := AddLinks(root, linkBase, fixedTime(), "409bfd08-aaaa", []LinkInput{
+		li("https://app.notion.com/p/abc", "TKT-12", "チケット", SourceAssistant, jst(15, 6)),
+		li("https://github.com/o/r/pull/11", "r#11", "PR", SourceTool, jst(16, 20)),
+	}, collect(&warns))
+	if err != nil {
+		t.Fatalf("AddLinks() error = %v", err)
+	}
+	want := LinkResult{URL: linkBase + "/p/20260829-409bfd08/", Added: 2, Dir: "20260829-409bfd08", Changed: true}
+	if res != want {
+		t.Errorf("res = %+v, want %+v", res, want)
+	}
+	if len(warns) != 0 {
+		t.Errorf("warn = %q", warns)
+	}
+	l := readLinksAt(t, root, "20260829-409bfd08")
+	if l.Schema != SchemaVersion || !l.UpdatedAt.Equal(fixedTime()) || len(l.Links) != 2 {
+		t.Fatalf("links.json = %+v", l)
+	}
+	if got := l.Links[1]; got.URL != "https://github.com/o/r/pull/11" || got.Label != "r#11" || got.Group != "PR" ||
+		!reflect.DeepEqual(got.Sources, []string{"tool"}) || !got.FirstSeen.Equal(jst(16, 20)) || !got.LastSeen.Equal(jst(16, 20)) {
+		t.Errorf("Links[1] = %+v", got)
+	}
+	// ページより先に打ったので、session.json の骨もここで書かれる (status と同じ規則)
+	sess, err := ReadSession(filepath.Join(root, "sessions", "20260829-409bfd08"))
+	if err != nil {
+		t.Fatalf("session.json が無い: %v", err)
+	}
+	if sess.SessionID != "409bfd08-aaaa" || sess.Dir != "20260829-409bfd08" {
+		t.Errorf("Session = %+v", sess)
+	}
+}
+
+func TestAddLinksMerges(t *testing.T) {
+	root := t.TempDir()
+	const u = "https://github.com/o/r/pull/12"
+	add := func(items ...LinkInput) LinkResult {
+		t.Helper()
+		res, err := AddLinks(root, linkBase, fixedTime(), "409bfd08-aaaa", items, func(string) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	add(li(u, "", "", SourceAssistant, jst(10, 0)))
+	res := add(
+		li(u, "r#12", "PR", SourceTool, jst(9, 0)),
+		li(u, "r#12", "PR", SourceTool, jst(11, 0)),
+	)
+	if res.Added != 0 || res.Updated != 1 || !res.Changed {
+		t.Errorf("2 回目の res = %+v, want added 0 / updated 1", res)
+	}
+	l := readLinksAt(t, root, res.Dir)
+	if len(l.Links) != 1 {
+		t.Fatalf("同じ URL が 1 件にまとまっていない: %d 件", len(l.Links))
+	}
+	got := l.Links[0]
+	if !got.FirstSeen.Equal(jst(9, 0)) || !got.LastSeen.Equal(jst(11, 0)) {
+		t.Errorf("時刻 = %v 〜 %v, want 09:00 〜 11:00 (最初は小さい方・最後は大きい方)", got.FirstSeen, got.LastSeen)
+	}
+	if !reflect.DeepEqual(got.Sources, []string{"assistant", "tool"}) {
+		t.Errorf("Sources = %q, want 和", got.Sources)
+	}
+	// 前は空 (URL を出していた・「その他」だった) なので、後から来た値で埋まる
+	if got.Label != "r#12" || got.Group != "PR" {
+		t.Errorf("Label/Group = %q/%q, want 埋まる", got.Label, got.Group)
+	}
+
+	// 最初に入った label・group を残す (turn ごとに表示が揺れないように)
+	add(li(u, "別", "別の組", SourceTool, jst(11, 0)))
+	got = readLinksAt(t, root, res.Dir).Links[0]
+	if got.Label != "r#12" || got.Group != "PR" {
+		t.Errorf("Label/Group = %q/%q, want 最初の r#12/PR のまま", got.Label, got.Group)
+	}
+}
+
+func TestAddLinksSameURLInOneCall(t *testing.T) {
+	root := t.TempDir()
+	const u = "https://github.com/o/r/pull/12"
+	res, err := AddLinks(root, linkBase, fixedTime(), "409bfd08-aaaa", []LinkInput{
+		li(u, "r#12", "PR", SourceAssistant, jst(10, 0)),
+		li(u, "r#12", "PR", SourceAssistant, jst(9, 0)),
+		li(u, "r#12", "PR", SourceAssistant, jst(12, 0)),
+	}, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Added != 1 || res.Updated != 0 {
+		t.Errorf("res = %+v, want added 1 / updated 0 (この呼び出しで足した URL は「前からあった」に数えない)", res)
+	}
+	got := readLinksAt(t, root, res.Dir).Links
+	if len(got) != 1 || !got[0].FirstSeen.Equal(jst(9, 0)) || !got[0].LastSeen.Equal(jst(12, 0)) {
+		t.Errorf("Links = %+v", got)
+	}
+}
+
+// TestAddLinksIsIdempotent は、呼ぶ側が turn ごとに同じリンクの組を渡し直しても、
+// 2 回目からは何も書かないことを確かめる。書くと links.json と session.json の mtime が
+// 動き、serve の走査が毎回その会話を読み直す。
+func TestAddLinksIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	items := []LinkInput{
+		li("https://app.notion.com/p/abc", "TKT-12", "チケット", SourceAssistant, jst(15, 6)),
+		li("https://github.com/o/r/pull/11", "r#11", "PR", SourceTool, jst(16, 20)),
+	}
+	first, err := AddLinks(root, linkBase, fixedTime(), "409bfd08-aaaa", items, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "sessions", first.Dir)
+	old := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	before := map[string][]byte{}
+	for _, name := range []string{LinksFileName, SessionFileName} {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[name] = b
+		if err := os.Chtimes(filepath.Join(dir, name), old, old); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	second, err := AddLinks(root, linkBase, fixedTime().Add(time.Hour), "409bfd08-aaaa", items, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Added != 0 || second.Updated != 0 || second.Changed {
+		t.Errorf("2 回目の res = %+v, want 何も変わらない", second)
+	}
+	if second.URL != first.URL {
+		t.Errorf("URL = %q, want %q", second.URL, first.URL)
+	}
+	for _, name := range []string{LinksFileName, SessionFileName} {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != string(before[name]) {
+			t.Errorf("%s の中身が変わった", name)
+		}
+		fi, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !fi.ModTime().Equal(old) {
+			t.Errorf("%s を書き直した (mtime = %v)", name, fi.ModTime())
+		}
+	}
+}
+
+func TestAddLinksCap(t *testing.T) {
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "sessions")
+	mkSessionDir(t, sessionsDir, "20260829-409bfd08", "409bfd08-aaaa")
+	full := Links{Schema: SchemaVersion, UpdatedAt: jst(9, 0)}
+	for i := 0; i < MaxLinks; i++ {
+		full.Links = append(full.Links, Link{
+			URL: fmt.Sprintf("https://ex.com/%d", i), Sources: []string{SourceAssistant},
+			FirstSeen: jst(9, 0), LastSeen: jst(9, 0),
+		})
+	}
+	if err := writeLinks(filepath.Join(sessionsDir, "20260829-409bfd08"), full); err != nil {
+		t.Fatal(err)
+	}
+
+	var warns []string
+	res, err := AddLinks(root, linkBase, fixedTime(), "409bfd08-aaaa", []LinkInput{
+		li("https://ex.com/new", "", "", SourceAssistant, jst(10, 0)),
+		li("https://ex.com/0", "", "", SourceAssistant, jst(10, 0)),
+	}, collect(&warns))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Skipped != 1 || res.Updated != 1 || res.Added != 0 {
+		t.Errorf("res = %+v, want skipped 1 / updated 1 (上限でも前からある URL はまとめる)", res)
+	}
+	l := readLinksAt(t, root, "20260829-409bfd08")
+	if len(l.Links) != MaxLinks {
+		t.Errorf("件数 = %d, want %d", len(l.Links), MaxLinks)
+	}
+	if !l.Links[0].LastSeen.Equal(jst(10, 0)) {
+		t.Errorf("前からある URL がまとまっていない: %+v", l.Links[0])
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "5000") || !strings.Contains(warns[0], "https://ex.com/new") {
+		t.Errorf("warn = %q, want 上限の旨と捨てた URL", warns)
+	}
+}
+
+// TestAddLinksWithoutItemsDoesNotTouchDisk は、渡された件が 0 のとき (空の入力・全部
+// 捨てた) に会話のディレクトリを作らないことを確かめる。呼ぶ側はリンクの無い会話でも
+// 打つので、ここで作ると一覧が空の会話で埋まる。
+func TestAddLinksWithoutItemsDoesNotTouchDisk(t *testing.T) {
+	root := t.TempDir()
+	res, err := AddLinks(root, linkBase, fixedTime(), "409bfd08-aaaa", nil, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (LinkResult{URL: linkBase + "/s/409bfd08-aaaa/"}); res != want {
+		t.Errorf("res = %+v, want %+v", res, want)
+	}
+	if ents, _ := os.ReadDir(root); len(ents) != 0 {
+		t.Errorf("0 件なのに root に作った: %v", ents)
+	}
+
+	// 会話のディレクトリが既にあれば、そのトップページを返す。何も書かない。
+	page, err := CreatePage(root, linkBase, fixedTime(), NewPageInput{SessionID: "409bfd08-aaaa", Title: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Dir(page.Dir)
+	res, err = AddLinks(root, linkBase, fixedTime(), "409bfd08-aaaa", nil, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := linkBase + "/p/" + filepath.Base(dir) + "/"; res.URL != want || res.Changed {
+		t.Errorf("res = %+v, want url %q", res, want)
+	}
+	if _, err := os.Stat(filepath.Join(dir, LinksFileName)); !os.IsNotExist(err) {
+		t.Errorf("0 件なのに links.json を書いた: %v", err)
+	}
+}
+
+func TestAddLinksRejectsBadSession(t *testing.T) {
+	for _, sid := range []string{"", "../x", "a b"} {
+		root := t.TempDir()
+		_, err := AddLinks(root, linkBase, fixedTime(), sid, []LinkInput{
+			li("https://ex.com/", "", "", SourceAssistant, jst(10, 0)),
+		}, func(string) {})
+		if err == nil {
+			t.Errorf("session id %q が通ってしまった", sid)
+		}
+		if ents, _ := os.ReadDir(root); len(ents) != 0 {
+			t.Errorf("session id %q を拒んだのに root に作った: %v", sid, ents)
+		}
+	}
+}
+
+func TestAddLinksReusesSessionDirOfPages(t *testing.T) {
+	root := t.TempDir()
+	page, err := CreatePage(root, linkBase, fixedTime(), NewPageInput{SessionID: "409bfd08-aaaa", Title: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 日付をまたいでも、同じ session id なら同じディレクトリに書く
+	res, err := AddLinks(root, linkBase, fixedTime().Add(24*time.Hour), "409bfd08-aaaa", []LinkInput{
+		li("https://ex.com/", "", "", SourceAssistant, jst(10, 0)),
+	}, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Base(filepath.Dir(page.Dir)); res.Dir != want {
+		t.Errorf("Dir = %q, want ページと同じ %q", res.Dir, want)
+	}
+	if ents, _ := os.ReadDir(filepath.Join(root, "sessions")); len(ents) != 1 {
+		t.Errorf("会話のディレクトリが割れた: %d 個", len(ents))
+	}
+}
+
+// TestAddLinksConcurrent は、同じ会話に cc-pages link が同時に来ても書き込みが
+// 消えないことを確かめる。まだディレクトリの無い会話への最初の書き込みが重なる
+// 場合も含める (重なると、会話のディレクトリを 2 つ作りうる)。
+func TestAddLinksConcurrent(t *testing.T) {
+	root := t.TempDir()
+	const workers, each = 20, 5
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			var items []LinkInput
+			for i := 0; i < each; i++ {
+				items = append(items, li(fmt.Sprintf("https://ex.com/%d/%d", w, i), "", "", SourceAssistant, jst(10, 0)))
+			}
+			if _, err := AddLinks(root, linkBase, fixedTime(), "409bfd08-aaaa", items, func(string) {}); err != nil {
+				errs <- err
+			}
+		}(w)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("AddLinks() error = %v", err)
+	}
+	ents, err := os.ReadDir(filepath.Join(root, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 1 {
+		names := []string{}
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("会話のディレクトリが割れた: %q", names)
+	}
+	if got := len(readLinksAt(t, root, ents[0].Name()).Links); got != workers*each {
+		t.Errorf("links.json の件数 = %d, want %d (重なった書き込みが消えた)", got, workers*each)
+	}
+}
+
+// TestAddLinksSetsBrokenFileAside は、手で壊した links.json があっても cc-pages link が
+// 止まらないことを確かめる。呼ぶ側は失敗を黙って捨てるので、ここで失敗し続けると
+// 誰も気づかないままリンクを取り逃す。壊れた中身は消さずに links.json.broken に残す。
+func TestAddLinksSetsBrokenFileAside(t *testing.T) {
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "sessions")
+	mkSessionDir(t, sessionsDir, "20260829-409bfd08", "409bfd08-aaaa")
+	dir := filepath.Join(sessionsDir, "20260829-409bfd08")
+	if err := os.WriteFile(filepath.Join(dir, LinksFileName), []byte("{壊れた"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var warns []string
+	res, err := AddLinks(root, linkBase, fixedTime(), "409bfd08-aaaa", []LinkInput{
+		li("https://ex.com/", "", "", SourceAssistant, jst(10, 0)),
+	}, collect(&warns))
+	if err != nil {
+		t.Fatalf("壊れた links.json で止まった: %v", err)
+	}
+	if res.Added != 1 {
+		t.Errorf("res = %+v", res)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, LinksFileName+".broken"))
+	if err != nil || string(b) != "{壊れた" {
+		t.Errorf("links.json.broken = %q, %v, want 元の中身", b, err)
+	}
+	if got := readLinksAt(t, root, "20260829-409bfd08").Links; len(got) != 1 || got[0].URL != "https://ex.com/" {
+		t.Errorf("Links = %+v", got)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], ".broken") {
+		t.Errorf("warn = %q, want 退けた先", warns)
+	}
 }

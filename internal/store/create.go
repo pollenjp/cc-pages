@@ -130,11 +130,26 @@ func ValidateSessionID(sessionID string) error {
 // ただし読むのは、名前がこの session id の形 (sessionDirMatches) のディレクトリの
 // session.json だけ。cc-pages link は turn の終わりごとに打たれるので、全部の会話の
 // session.json を毎回読むと、会話が増えるほど遅くなる。
+//
+// 作るときは sessions の lock を握って探し直し、作ったらすぐ session.json の骨を書く。
+// 同じ会話への最初の書き込みが 2 つ重なると (cc-pages link が同時に 2 つ来たときなど)、
+// 片方が「作られたばかりで session.json がまだ無いディレクトリ」を別の会話のものと見て
+// 名前を伸ばし、会話のディレクトリが 2 つに割れるため。あれば lock は取らない。
 func findOrMakeSessionDir(sessionsDir, sessionID string, now time.Time) (string, error) {
+	if name, ok := FindSessionDir(sessionsDir, sessionID); ok {
+		return name, nil
+	}
+	unlock, err := lockFile(sessionsLockPath(sessionsDir), lockTimeout)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+
 	ents, err := os.ReadDir(sessionsDir)
 	if err != nil {
 		return "", err
 	}
+	// lock を待つ間に、別の cc-pages が作り終えているかもしれない
 	if name := matchSessionDir(sessionsDir, ents, sessionID); name != "" {
 		return name, nil
 	}
@@ -156,7 +171,21 @@ func findOrMakeSessionDir(sessionsDir, sessionID string, now time.Time) (string,
 	if taken[name] {
 		return "", fmt.Errorf("セッションディレクトリ名が衝突した: %s", name)
 	}
-	return name, os.MkdirAll(filepath.Join(sessionsDir, name), 0o700)
+	path := filepath.Join(sessionsDir, name)
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return "", err
+	}
+	// 骨は lock を外す前に書く (touchSession が後で LastSeen を進める)
+	return name, WriteSession(path, Session{
+		Schema: SchemaVersion, SessionID: sessionID, Dir: name, FirstSeen: now, LastSeen: now,
+	})
+}
+
+// sessionsLockPath は会話のディレクトリを作る間だけ握る lock のファイル
+// (<root>/sessions.lock)。sessions の中に置かないのは、sessions の直下を会話の
+// ディレクトリだけにしておくため。
+func sessionsLockPath(sessionsDir string) string {
+	return filepath.Clean(sessionsDir) + ".lock"
 }
 
 // FindSessionDir は session id に対応する会話のディレクトリ名を探す。作らない。
