@@ -1,8 +1,10 @@
 package store
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -349,5 +351,128 @@ func TestScanRereadsWhenStatusOverwritten(t *testing.T) {
 	}
 	if e := only(t, second); e.Status == nil || e.Status.Now[0] != "新しい" {
 		t.Errorf("status.json を上書きしたのに読み直していない: %+v", e.Status)
+	}
+}
+
+// addTwoLinks は sess-aaaa の会話にリンクを 2 件足し、会話のディレクトリを返す。
+func addTwoLinks(t *testing.T, root string) string {
+	t.Helper()
+	res, err := AddLinks(root, "http://localhost:7777", fixedTime(), "sess-aaaa", []LinkInput{
+		li("https://app.notion.com/p/abc", "TKT-12", "チケット", SourceAssistant, jst(15, 6)),
+		li("https://github.com/o/r/pull/11", "r#11", "PR", SourceTool, jst(16, 20)),
+	}, func(string) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(root, "sessions", res.Dir)
+}
+
+// TestScanReadsLinks は links.json を拾うことと、ページの無いリンクだけの会話も
+// 1 つの会話として出ることを確かめる (status だけの会話と同じ扱い)。
+func TestScanReadsLinks(t *testing.T) {
+	root := t.TempDir()
+	addTwoLinks(t, root)
+	got, err := Scan(filepath.Join(root, "sessions"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := only(t, got)
+	if len(e.Links) != 2 || e.Links[0].Label != "TKT-12" || e.Links[1].URL != "https://github.com/o/r/pull/11" {
+		t.Errorf("Links = %+v", e.Links)
+	}
+	if e.LinksModTime.IsZero() {
+		t.Error("LinksModTime が採られていない")
+	}
+	if len(e.Pages) != 0 || e.Session.SessionID != "sess-aaaa" {
+		t.Errorf("Pages = %d, SessionID = %q", len(e.Pages), e.Session.SessionID)
+	}
+}
+
+func TestScanSkipsBrokenLinks(t *testing.T) {
+	root := t.TempDir()
+	res := seed(t, root, "sess-aaaa", "T", fixedTime())
+	if err := os.WriteFile(filepath.Join(filepath.Dir(res.Dir), LinksFileName), []byte("{壊れた"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Scan(filepath.Join(root, "sessions"), nil)
+	if err != nil {
+		t.Fatalf("壊れた links.json で Scan がエラーになった: %v", err)
+	}
+	e := only(t, got)
+	if e.Links != nil {
+		t.Errorf("壊れた links.json が拾われた: %+v", e.Links)
+	}
+	if len(e.Pages) != 1 {
+		t.Errorf("ページまで飛んだ: %d", len(e.Pages))
+	}
+}
+
+// TestScanRereadsWhenLinksOverwritten は、links.json の書き換えだけで読み直される
+// ことを確かめる。cc-pages link は rename で書くのでディレクトリの mtime も動くが、
+// 手で直したとき (その場で上書き) や、知らせが届かなかったときに定期走査が永久に
+// 取りこぼさないよう、links.json の mtime も見る。
+func TestScanRereadsWhenLinksOverwritten(t *testing.T) {
+	root := t.TempDir()
+	sessionPath := addTwoLinks(t, root)
+	sessionsDir := filepath.Join(root, "sessions")
+	first, err := Scan(sessionsDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirBefore, err := os.Stat(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	l, err := ReadLinks(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Links = l.Links[:1]
+	l.Links[0].Label = "書き換えた"
+	b, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// その場で上書きし、links.json の mtime だけを進めてディレクトリの mtime は戻す
+	if err := os.WriteFile(filepath.Join(sessionPath, LinksFileName), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newer := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(filepath.Join(sessionPath, LinksFileName), newer, newer); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(sessionPath, dirBefore.ModTime(), dirBefore.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := Scan(sessionsDir, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := only(t, second); len(e.Links) != 1 || e.Links[0].Label != "書き換えた" {
+		t.Errorf("links.json を書き換えたのに読み直していない: %+v", e.Links)
+	}
+}
+
+func TestReadSessionEntry(t *testing.T) {
+	root := t.TempDir()
+	seed(t, root, "sess-aaaa", "T", fixedTime())
+	sessionPath := addTwoLinks(t, root)
+	sessionsDir := filepath.Join(root, "sessions")
+	all, err := Scan(sessionsDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := ReadSessionEntry(sessionsDir, filepath.Base(sessionPath))
+	if !ok {
+		t.Fatal("ある会話を読めなかった")
+	}
+	if want := only(t, all); !reflect.DeepEqual(got, want) {
+		t.Errorf("ReadSessionEntry = %+v\nwant (Scan の 1 件) %+v", got, want)
+	}
+	if _, ok := ReadSessionEntry(sessionsDir, "20260829-nothere"); ok {
+		t.Error("無い会話を読めたことになった")
 	}
 }
