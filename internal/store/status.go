@@ -80,7 +80,7 @@ func UpdateStatus(root, baseURL string, now time.Time, in StatusInput) (StatusRe
 	if in.SessionID == "" {
 		return StatusResult{}, errors.New("session id が空")
 	}
-	if err := validateSessionID(in.SessionID); err != nil {
+	if err := ValidateSessionID(in.SessionID); err != nil {
 		return StatusResult{}, err
 	}
 	nowItems, nextItems := cleanItems(in.Now), cleanItems(in.Next)
