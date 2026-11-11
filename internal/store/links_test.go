@@ -604,33 +604,44 @@ func TestAddLinksConcurrent(t *testing.T) {
 // TestAddLinksSetsBrokenFileAside は、手で壊した links.json があっても cc-pages link が
 // 止まらないことを確かめる。呼ぶ側は失敗を黙って捨てるので、ここで失敗し続けると
 // 誰も気づかないままリンクを取り逃す。壊れた中身は消さずに links.json.broken に残す。
+// JSON の文法の崩れだけでなく、時刻の文字列の崩れ (time の解析の誤り) も同じに扱う。
 func TestAddLinksSetsBrokenFileAside(t *testing.T) {
-	root := t.TempDir()
-	sessionsDir := filepath.Join(root, "sessions")
-	mkSessionDir(t, sessionsDir, "20260829-409bfd08", "409bfd08-aaaa")
-	dir := filepath.Join(sessionsDir, "20260829-409bfd08")
-	if err := os.WriteFile(filepath.Join(dir, LinksFileName), []byte("{壊れた"), 0o600); err != nil {
-		t.Fatal(err)
+	cases := []struct{ name, body string }{
+		{"JSON の文法が崩れた", "{壊れた"},
+		{"時刻が空", `{"schema":1,"links":[{"url":"https://a/","sources":["assistant"],"first_seen":"","last_seen":""}]}`},
+		{"時刻の書式が違う", `{"schema":1,"links":[{"url":"https://a/","sources":["assistant"],"first_seen":"2026-11-11 15:06","last_seen":"2026-11-11 15:06"}]}`},
+		{"型が違う", `{"schema":1,"links":"一覧ではない"}`},
 	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := t.TempDir()
+			sessionsDir := filepath.Join(root, "sessions")
+			mkSessionDir(t, sessionsDir, "20260829-409bfd08", "409bfd08-aaaa")
+			dir := filepath.Join(sessionsDir, "20260829-409bfd08")
+			if err := os.WriteFile(filepath.Join(dir, LinksFileName), []byte(c.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
 
-	var warns []string
-	res, err := AddLinks(root, linkBase, fixedTime(), "409bfd08-aaaa", []LinkInput{
-		li("https://ex.com/", "", "", SourceAssistant, jst(10, 0)),
-	}, collect(&warns))
-	if err != nil {
-		t.Fatalf("壊れた links.json で止まった: %v", err)
-	}
-	if res.Added != 1 {
-		t.Errorf("res = %+v", res)
-	}
-	b, err := os.ReadFile(filepath.Join(dir, LinksFileName+".broken"))
-	if err != nil || string(b) != "{壊れた" {
-		t.Errorf("links.json.broken = %q, %v, want 元の中身", b, err)
-	}
-	if got := readLinksAt(t, root, "20260829-409bfd08").Links; len(got) != 1 || got[0].URL != "https://ex.com/" {
-		t.Errorf("Links = %+v", got)
-	}
-	if len(warns) != 1 || !strings.Contains(warns[0], ".broken") {
-		t.Errorf("warn = %q, want 退けた先", warns)
+			var warns []string
+			res, err := AddLinks(root, linkBase, fixedTime(), "409bfd08-aaaa", []LinkInput{
+				li("https://ex.com/", "", "", SourceAssistant, jst(10, 0)),
+			}, collect(&warns))
+			if err != nil {
+				t.Fatalf("壊れた links.json で止まった: %v", err)
+			}
+			if res.Added != 1 {
+				t.Errorf("res = %+v", res)
+			}
+			b, err := os.ReadFile(filepath.Join(dir, LinksFileName+".broken"))
+			if err != nil || string(b) != c.body {
+				t.Errorf("links.json.broken = %q, %v, want 元の中身", b, err)
+			}
+			if got := readLinksAt(t, root, "20260829-409bfd08").Links; len(got) != 1 || got[0].URL != "https://ex.com/" {
+				t.Errorf("Links = %+v", got)
+			}
+			if len(warns) != 1 || !strings.Contains(warns[0], ".broken") {
+				t.Errorf("warn = %q, want 退けた先", warns)
+			}
+		})
 	}
 }

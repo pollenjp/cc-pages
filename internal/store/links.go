@@ -387,23 +387,24 @@ func AddLinks(root, baseURL string, now time.Time, sessionID string, items []Lin
 
 // loadLinksForUpdate は書き足す前の links.json を読む。無ければ空。
 //
-// JSON として壊れていれば (手で直そうとして崩したときにしか起きない)、
-// links.json.broken に退けて空から書き直す。呼ぶ側は失敗を黙って捨てるので、
-// 失敗を返し続けると、誰も気づかないままリンクを取り逃す。壊れた中身は消さない。
+// 読めたのに JSON として解けなければ (手で直そうとして崩したときにしか起きない)、
+// links.json.broken に退けて空から書き直す。文法の崩れだけでなく、時刻の文字列の
+// 崩れ (time の解析の誤り) も同じに扱う。呼ぶ側は失敗を黙って捨てるので、失敗を
+// 返し続けると、誰も気づかないままリンクを取り逃す。読めないとき (権限など) だけを
+// 失敗として返す (終了コード 1)。
 func loadLinksForUpdate(dir string, warn func(string)) (Links, error) {
-	l, err := ReadLinks(dir)
-	if err == nil {
-		return l, nil
-	}
+	path := filepath.Join(dir, LinksFileName)
+	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return Links{}, nil
 	}
-	var syntaxErr *json.SyntaxError
-	var typeErr *json.UnmarshalTypeError
-	if !errors.As(err, &syntaxErr) && !errors.As(err, &typeErr) {
-		return Links{}, err // 読めない (権限など)。終了コード 1 にする
+	if err != nil {
+		return Links{}, err
 	}
-	path := filepath.Join(dir, LinksFileName)
+	var l Links
+	if err := json.Unmarshal(b, &l); err == nil {
+		return l, nil
+	}
 	if err := os.Rename(path, path+".broken"); err != nil {
 		return Links{}, err
 	}

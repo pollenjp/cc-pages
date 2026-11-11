@@ -123,6 +123,7 @@ func TestSessionPageLinkNotes(t *testing.T) {
 	body := get(t, linksFixture(t,
 		mkLink("http://localhost:7777/p/20260829-aaaa/0001-notion/", "📄0001", "cc-page", asst, lt(29, 15, 0), lt(29, 15, 0)),
 		mkLink("http://localhost:7777/p/20260829-aaaa/0002-%E8%AA%BF%E3%81%B9%E3%81%9F%E3%81%93%E3%81%A8/", "📄0002", "cc-page", asst, lt(29, 15, 1), lt(29, 15, 1)),
+		mkLink("http://localhost:7777/p/20260829-aaaa/0002-調べたこと/", "📄0002 (日本語のまま)", "cc-page", asst, lt(29, 15, 1), lt(29, 15, 1)),
 		mkLink("http://localhost:7777/p/20260829-bbbb/", "前の会話", "cc-page", asst, lt(29, 15, 2), lt(29, 15, 2)),
 		mkLink("https://github.com/o/r/pull/11", "r#11", "PR", asst, lt(29, 15, 3), lt(29, 15, 3)),
 		mkLink(long, "長い", "PR", asst, lt(29, 15, 4), lt(29, 15, 4)),
@@ -130,9 +131,11 @@ func TestSessionPageLinkNotes(t *testing.T) {
 	), "/p/20260829-aaaa/").Body.String()
 
 	for _, want := range []string{
-		// cc-pages 自身のページなら、索引にあるそのページの題 (%XX の形でも引ける)
+		// cc-pages 自身のページなら、索引にあるそのページの題。cc-pages new が出す
+		// 日本語のままの形でも、%XX に潰した形でも引ける
 		`>📄0001</a><span class="desc">Notion の調査</span>`,
 		`>📄0002</a><span class="desc">調べたこと</span>`,
+		`>📄0002 (日本語のまま)</a><span class="desc">調べたこと</span>`,
 		// 会話のトップページなら、その会話の題
 		`>前の会話</a><span class="desc">Slack の調査</span>`,
 		// ほかは scheme を除いた URL
