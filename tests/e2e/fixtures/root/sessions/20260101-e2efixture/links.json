@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "updated_at": "2026-01-02T10:00:00+09:00",
+  "links": [
+    {
+      "url": "https://app.notion.com/p/e2e-ticket-12",
+      "label": "TKT-12",
+      "group": "チケット",
+      "sources": ["assistant"],
+      "first_seen": "2026-01-01T09:05:00+09:00",
+      "last_seen": "2026-01-01T09:40:00+09:00"
+    },
+    {
+      "url": "https://github.com/example/repo/actions/runs/123456",
+      "label": "CI run",
+      "group": "CI",
+      "sources": ["tool"],
+      "first_seen": "2026-01-01T09:10:00+09:00",
+      "last_seen": "2026-01-01T09:10:00+09:00"
+    },
+    {
+      "url": "https://github.com/example/repo/pull/11",
+      "label": "repo#11",
+      "group": "PR",
+      "sources": ["assistant", "tool"],
+      "first_seen": "2026-01-01T09:20:00+09:00",
+      "last_seen": "2026-01-01T09:35:00+09:00"
+    },
+    {
+      "url": "https://github.com/example/repo/pull/12",
+      "label": "repo#12",
+      "group": "PR",
+      "sources": ["assistant"],
+      "first_seen": "2026-01-01T09:30:00+09:00",
+      "last_seen": "2026-01-02T10:00:00+09:00"
+    },
+    {
+      "url": "http://localhost:7788/p/20260101-e2efixture/0001-diff-の配色/",
+      "label": "📄0001",
+      "group": "cc-page",
+      "sources": ["assistant"],
+      "first_seen": "2026-01-01T09:45:00+09:00",
+      "last_seen": "2026-01-01T09:45:00+09:00"
+    },
+    {
+      "url": "https://example.com/docs/a-very-long-path/that-keeps-going/and-going/until-it-is-shortened",
+      "sources": ["assistant"],
+      "first_seen": "2026-01-01T09:50:00+09:00",
+      "last_seen": "2026-01-01T09:50:00+09:00"
+    }
+  ]
+}
