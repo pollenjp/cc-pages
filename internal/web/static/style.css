@@ -55,6 +55,25 @@ input[type=search] {
 .status h2 { margin: 0 0 .4rem; font-size: 1rem; }
 .status ul, .status ol { margin: 0; padding-left: 1.3rem; }
 .status .meta { margin-top: .5rem; }
+/* 会話のトップページの「リンク」の節 (session.html)。cc-pages link が links.json に
+   残したリンクを組ごとに並べる。行は label・添え書き・時刻の 3 列で、列を行どうしで
+   揃えるため ul を grid にして li を subgrid にする (li のままなので一覧の意味は残る)。
+   label の列は 4 割まで、添え書きは 1 行に収めて省略し、時刻は折り返さない。 */
+.links { margin-top: 2rem; }
+.links h3 { margin: 1rem 0 .2rem; font-size: .9rem; color: var(--muted); }
+.links ul {
+  list-style: none; margin: 0; padding: 0; display: grid;
+  grid-template-columns: fit-content(40%) minmax(0, 1fr) max-content; column-gap: .9rem;
+}
+.links li {
+  display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: baseline;
+  padding: .2rem 0; border-bottom: 1px solid var(--line);
+}
+.links li > :first-child { overflow-wrap: anywhere; }
+.links .desc { color: var(--muted); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.links .time { color: var(--muted); font-size: .82rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.links details { margin-top: 1.2rem; }
+.links summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
 th, td { border: 1px solid var(--line); padding: .4rem .6rem; text-align: left; }
 th { background: var(--card); }

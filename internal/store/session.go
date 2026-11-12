@@ -43,10 +43,15 @@ func ReadSession(dir string) (Session, error) {
 }
 
 // WriteSession は dir/session.json を書く。
+//
+// 一時ファイルに書いて rename する。cc-pages link が turn の終わりごとに書くので、
+// 切り詰めてから書くと、その隙に読んだ側 (別の cc-pages の findOrMakeSessionDir や
+// serve の走査) が空の JSON を見る。findOrMakeSessionDir がそれを「知らない会話」と
+// 取り違えると、会話のディレクトリが 2 つに割れる。
 func WriteSession(dir string, s Session) error {
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, SessionFileName), append(b, '\n'), 0o600)
+	return writeFileAtomic(filepath.Join(dir, SessionFileName), append(b, '\n'), 0o600)
 }

@@ -1,0 +1,5 @@
+{{define "body"}}
+{{/* /s/<session_id>/ で会話が見つからないとき。渡された session id は出さない
+     (出すと、escape はされても URL に入れた文字が画面に映る)。 */}}
+<p class="empty">この会話のページ・リンクはまだありません。<br><a href="/">一覧へ</a></p>
+{{end}}

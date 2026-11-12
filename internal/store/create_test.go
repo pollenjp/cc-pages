@@ -235,3 +235,133 @@ func TestCreatePageRejectsUnsafeSession(t *testing.T) {
 		t.Errorf("UUID 形状の session id が拒否された: %v", err)
 	}
 }
+
+// mkSessionDir は sessions/<name>/session.json を session id sid で書く。
+func mkSessionDir(t *testing.T, sessionsDir, name, sid string) {
+	t.Helper()
+	dir := filepath.Join(sessionsDir, name)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSession(dir, Session{Schema: SchemaVersion, SessionID: sid, Dir: name}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSessionDirMatches(t *testing.T) {
+	const sid = "0a1b2c3d-e5f6-4711-8000-000000000000"
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"20261111-0a1b2c3d", true},
+		{"20261111-0a1b2c3d-e5f", true}, // 衝突して 12 字に伸ばした名前
+		{"20261111-zzzz", false},
+		{"nodash", false},
+		{"20261111-", false},
+	}
+	for _, c := range cases {
+		if got := sessionDirMatches(c.name, sid); got != c.want {
+			t.Errorf("sessionDirMatches(%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// TestFindOrMakeSessionDirReadsOnlyMatchingNames は、会話のディレクトリを引くときに
+// 名前の合わないディレクトリの session.json を読まないことを確かめる。
+//
+// cc-pages link は turn の終わりごとに打たれる。全部の会話の session.json を読むと、
+// 会話が増えるほど遅くなる。名前は「日付-session id の先頭」なので、名前で絞れる。
+// 名前の合わないディレクトリが同じ session id を名乗っていても使わない (手で
+// 名前を変えたときにしか起きない)。
+func TestFindOrMakeSessionDirReadsOnlyMatchingNames(t *testing.T) {
+	root := t.TempDir()
+	sessionsDir := filepath.Join(root, "sessions")
+	mkSessionDir(t, sessionsDir, "20260101-zzzzzzzz", "409bfd08-aaaa")
+
+	res, err := CreatePage(root, "http://localhost:7777", fixedTime(), NewPageInput{SessionID: "409bfd08-aaaa", Title: "T"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(sessionsDir, "20260829-409bfd08", "0001-t"); res.Dir != want {
+		t.Errorf("Dir = %q, want %q (名前の合わない dir を使った)", res.Dir, want)
+	}
+}
+
+func TestFindSessionDir(t *testing.T) {
+	sessionsDir := filepath.Join(t.TempDir(), "sessions")
+	if name, ok := FindSessionDir(sessionsDir, "409bfd08-aaaa"); ok {
+		t.Errorf("sessions が無いのに見つかった: %q", name)
+	}
+
+	// 先頭 8 字が同じ別の会話が先に居たので、12 字に伸ばした名前で作られた会話
+	mkSessionDir(t, sessionsDir, "20260829-409bfd08", "409bfd08-bbbb")
+	mkSessionDir(t, sessionsDir, "20260829-409bfd08-aaa", "409bfd08-aaaa")
+
+	if name, ok := FindSessionDir(sessionsDir, "409bfd08-aaaa"); !ok || name != "20260829-409bfd08-aaa" {
+		t.Errorf("FindSessionDir(aaaa) = %q, %v, want 20260829-409bfd08-aaa", name, ok)
+	}
+	if name, ok := FindSessionDir(sessionsDir, "409bfd08-bbbb"); !ok || name != "20260829-409bfd08" {
+		t.Errorf("FindSessionDir(bbbb) = %q, %v, want 20260829-409bfd08", name, ok)
+	}
+	// 名前の先頭は合うが session.json の session id が違う
+	if name, ok := FindSessionDir(sessionsDir, "409bfd08-cccc"); ok {
+		t.Errorf("別の会話のディレクトリを返した: %q", name)
+	}
+	// 探すだけで、作らない
+	ents, err := os.ReadDir(sessionsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 2 {
+		t.Errorf("FindSessionDir がディレクトリを作った: %d 個", len(ents))
+	}
+}
+
+// TestWriteSessionKeepsOldContentForOpenReaders は、session.json を書き直している間に
+// 読んだ側が、前の中身を丸ごと読めることを確かめる。
+//
+// cc-pages link は turn ごとに session.json を書く。切り詰めてから書くと、その隙に
+// 読んだ findOrMakeSessionDir が空の JSON を見て「知らない会話」と取り違え、
+// 会話のディレクトリを 2 つに割ってしまう。一時ファイルから rename で入れ替えれば、
+// 開いていた読み手は前のファイルを読み続ける。
+func TestWriteSessionKeepsOldContentForOpenReaders(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteSession(dir, Session{Schema: SchemaVersion, SessionID: "old", Dir: "d"}); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(filepath.Join(dir, SessionFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if err := WriteSession(dir, Session{Schema: SchemaVersion, SessionID: "new", Dir: "d"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var s Session
+	if err := json.NewDecoder(f).Decode(&s); err != nil {
+		t.Fatalf("開いていた session.json が読めない (切り詰められた): %v", err)
+	}
+	if s.SessionID != "old" {
+		t.Errorf("開いていた読み手が見た session_id = %q, want old", s.SessionID)
+	}
+	if got, err := ReadSession(dir); err != nil || got.SessionID != "new" {
+		t.Errorf("書いた後の ReadSession = %+v, %v, want new", got, err)
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ents) != 1 {
+		t.Errorf("session.json 以外のファイルが残った: %d 個", len(ents))
+	}
+	fi, err := os.Stat(filepath.Join(dir, SessionFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("session.json のパーミッション = %o, want 600", perm)
+	}
+}

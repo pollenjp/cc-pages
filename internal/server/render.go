@@ -18,6 +18,7 @@ type sessionRow struct {
 	Cwd       string
 	GitBranch string
 	PageCount int
+	LinkCount int
 	Bytes     int64
 	LastSeen  time.Time
 	Pages     []pageRow
@@ -59,13 +60,15 @@ type pageData struct {
 	// パンくずのセッション部分。ページ表示のときだけ入る。
 	SessionTitle string
 	SessionURL   string
+	// Links は会話のトップページの「リンク」の節。リンクが無ければ nil。
+	Links *linkSection
 }
 
 // toRow は索引のビューをテンプレート用の形に写す。
 func toRow(v index.SessionView) sessionRow {
 	r := sessionRow{
 		DirName: v.DirName, Title: v.Title, Cwd: v.Cwd, GitBranch: v.GitBranch,
-		PageCount: v.PageCount, Bytes: v.Bytes, LastSeen: v.LastSeen,
+		PageCount: v.PageCount, LinkCount: v.LinkCount, Bytes: v.Bytes, LastSeen: v.LastSeen,
 	}
 	for _, p := range v.Pages {
 		r.Pages = append(r.Pages, pageRow{

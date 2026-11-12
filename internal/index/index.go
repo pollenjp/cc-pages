@@ -34,30 +34,48 @@ type StatusView struct {
 	UpdatedAt time.Time
 }
 
+// LinkView は会話に残したリンク 1 件 (links.json 由来)。
+type LinkView struct {
+	URL       string
+	Label     string // 空なら URL を出す
+	Group     string // 空なら「その他」
+	Sources   []string
+	FirstSeen time.Time
+	LastSeen  time.Time
+}
+
 // SessionView は一覧に出す 1 セッション分。
 type SessionView struct {
 	DirName   string
+	SessionID string
 	Title     string
 	Cwd       string
 	GitBranch string
 	PageCount int
+	LinkCount int
 	Bytes     int64
 	LastSeen  time.Time
-	Pages     []PageView
-	Status    *StatusView // 無ければ nil
+	// Started は会話の始まり。session.json の FirstSeen・ページの CreatedAt・リンクの
+	// FirstSeen のうち最も早いもの。「リンク」の節で、始まりと違う日の時刻に日付を
+	// 付けるのに使う。
+	Started time.Time
+	Pages   []PageView
+	Links   []LinkView  // links.json の並び (足した順)
+	Status  *StatusView // 無ければ nil
 }
 
 // Index はメモリ上の索引。Replace と読み出しは並行に呼ばれる。
 type Index struct {
-	mu       sync.RWMutex
-	sessions []SessionView          // LastSeen の降順
-	byDir    map[string]SessionView // DirName で引く
-	haystack map[string]string      // DirName → 検索対象を連結した小文字の文字列
+	mu        sync.RWMutex
+	sessions  []SessionView          // LastSeen の降順
+	byDir     map[string]SessionView // DirName で引く
+	bySession map[string]string      // session id → DirName。/s/<session_id>/ が引く
+	haystack  map[string]string      // DirName → 検索対象を連結した小文字の文字列
 }
 
 // New は空の索引を作る。
 func New() *Index {
-	return &Index{byDir: map[string]SessionView{}, haystack: map[string]string{}}
+	return &Index{byDir: map[string]SessionView{}, bySession: map[string]string{}, haystack: map[string]string{}}
 }
 
 // Replace は索引を丸ごと入れ替える。
@@ -76,9 +94,18 @@ func (ix *Index) Replace(entries map[string]store.SessionEntry, meta map[string]
 	}
 	sort.Slice(views, func(i, j int) bool { return views[i].LastSeen.After(views[j].LastSeen) })
 
+	// 同じ session id のディレクトリが割れていたら (手で動かしたときなど)、新しい方を
+	// 引く。views は新しい順なので、最初に見たものを残す。
+	bySession := make(map[string]string, len(views))
+	for _, v := range views {
+		if _, dup := bySession[v.SessionID]; v.SessionID != "" && !dup {
+			bySession[v.SessionID] = v.DirName
+		}
+	}
+
 	ix.mu.Lock()
 	defer ix.mu.Unlock()
-	ix.sessions, ix.byDir, ix.haystack = views, byDir, hay
+	ix.sessions, ix.byDir, ix.bySession, ix.haystack = views, byDir, bySession, hay
 }
 
 // buildView は 1 セッション分のビューを組み立てる。
@@ -92,18 +119,29 @@ func (ix *Index) Replace(entries map[string]store.SessionEntry, meta map[string]
 func buildView(e store.SessionEntry, m transcript.Meta) SessionView {
 	v := SessionView{
 		DirName:   e.DirName,
+		SessionID: e.Session.SessionID,
 		Cwd:       e.Session.Cwd,
 		GitBranch: e.Session.GitBranch,
 		PageCount: len(e.Pages),
+		LinkCount: len(e.Links),
 		Bytes:     e.Bytes,
 		LastSeen:  e.Session.LastSeen.Local(),
 	}
+	v.Started = earliest(v.Started, e.Session.FirstSeen)
 	for _, p := range e.Pages {
 		v.Pages = append(v.Pages, PageView{
 			DirName: p.DirName, ID: p.Page.ID, Title: p.Page.Title,
 			Summary: p.Page.Summary, Prompt: p.Page.Prompt, Tags: p.Page.Tags,
 			CreatedAt: p.Page.CreatedAt.Local(), Mode: p.Page.Mode, DirPath: p.DirPath,
 		})
+		v.Started = earliest(v.Started, p.Page.CreatedAt)
+	}
+	for _, l := range e.Links {
+		v.Links = append(v.Links, LinkView{
+			URL: l.URL, Label: l.Label, Group: l.Group, Sources: l.Sources,
+			FirstSeen: l.FirstSeen.Local(), LastSeen: l.LastSeen.Local(),
+		})
+		v.Started = earliest(v.Started, l.FirstSeen)
 	}
 	// 状況。Scan が空のものを nil にしているが、テストなどで直接組んだ entry の
 	// ために Empty も見る。時刻はここでローカルに揃える (LastSeen と同じ理由)。
@@ -132,10 +170,18 @@ func buildView(e store.SessionEntry, m transcript.Meta) SessionView {
 	return v
 }
 
+// earliest は cur と t のうち早い方をローカルにして返す。ゼロ値は「無い」として扱う。
+func earliest(cur, t time.Time) time.Time {
+	if t.IsZero() || (!cur.IsZero() && !t.Before(cur)) {
+		return cur
+	}
+	return t.Local()
+}
+
 // buildHaystack は検索対象を 1 本の小文字文字列に潰す。
 //
 // 対象はタイトル・cwd・ブランチ・状況 (now / next) と、各ページのタイトル・要約・
-// タグ・元プロンプト。
+// タグ・元プロンプトと、各リンクの label・URL。
 // 本文 (index.html) は含めない。常時の索引を軽く保つため。
 func buildHaystack(v SessionView) string {
 	var b strings.Builder
@@ -155,6 +201,13 @@ func buildHaystack(v SessionView) string {
 			b.WriteByte('\n')
 			b.WriteString(t)
 		}
+	}
+	// 会話に残したリンクでも引けるようにする (「あの PR を出した会話」を探す)。
+	for _, l := range v.Links {
+		b.WriteByte('\n')
+		b.WriteString(l.Label)
+		b.WriteByte('\n')
+		b.WriteString(l.URL)
 	}
 	// 状況の文言でも引けるようにする。
 	if v.Status != nil {
@@ -201,6 +254,19 @@ func (ix *Index) Session(dirName string) (SessionView, bool) {
 	ix.mu.RLock()
 	defer ix.mu.RUnlock()
 	v, ok := ix.byDir[dirName]
+	return v, ok
+}
+
+// SessionByID は session id でセッションを引く。同じ session id のディレクトリが
+// 2 つあれば LastSeen の新しい方。
+func (ix *Index) SessionByID(sessionID string) (SessionView, bool) {
+	ix.mu.RLock()
+	defer ix.mu.RUnlock()
+	dir, ok := ix.bySession[sessionID]
+	if !ok {
+		return SessionView{}, false
+	}
+	v, ok := ix.byDir[dir]
 	return v, ok
 }
 

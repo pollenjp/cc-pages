@@ -41,6 +41,15 @@ type SessionEntry struct {
 	// cc-pages status は毎回 touch を送るが、届かなかったときに定期走査が
 	// 永久に取りこぼさないよう、これも見る。
 	StatusModTime time.Time
+
+	// Links はセッション直下の links.json のリンク。無い / 壊れている / 0 件なら nil。
+	Links []Link
+
+	// LinksModTime は links.json の mtime。無ければゼロ値。差分判定に使う。
+	//
+	// cc-pages link は rename で書くのでセッションディレクトリの mtime も動くが、
+	// 手で直したとき (その場で上書き) にも取りこぼさないよう、これも見る。
+	LinksModTime time.Time
 }
 
 // Scan は sessionsDir を走査する。
@@ -73,13 +82,27 @@ func Scan(sessionsDir string, prev map[string]SessionEntry) (map[string]SessionE
 		}
 		if old, ok := prev[e.Name()]; ok && old.ModTime.Equal(fi.ModTime()) &&
 			!maxPageModTime(dirPath).After(old.PageModTime) &&
-			statusModTime(dirPath).Equal(old.StatusModTime) {
+			statusModTime(dirPath).Equal(old.StatusModTime) &&
+			linksModTime(dirPath).Equal(old.LinksModTime) {
 			out[e.Name()] = old
 			continue
 		}
 		out[e.Name()] = readSession(dirPath, e.Name(), fi.ModTime())
 	}
 	return out, nil
+}
+
+// ReadSessionEntry は sessionsDir/dirName の 1 セッションだけを読む。dir が無ければ false。
+//
+// cc-pages link の知らせを受けた serve が、全体を走査せずにその会話だけを読み直すのに
+// 使う。中身は Scan がそのセッションを読み直したときと同じ。
+func ReadSessionEntry(sessionsDir, dirName string) (SessionEntry, bool) {
+	dirPath := filepath.Join(sessionsDir, dirName)
+	fi, err := os.Stat(dirPath)
+	if err != nil || !fi.IsDir() {
+		return SessionEntry{}, false
+	}
+	return readSession(dirPath, dirName, fi.ModTime()), true
 }
 
 // readSession は 1 セッション分を読み直す。
@@ -97,6 +120,12 @@ func readSession(dirPath, dirName string, modTime time.Time) SessionEntry {
 	entry.StatusModTime = statusModTime(dirPath)
 	if s, err := ReadStatus(dirPath); err == nil && !s.Empty() {
 		entry.Status = &s
+	}
+
+	// links.json。status.json と同じく mtime を先に採り、壊れていれば黙って飛ばす。
+	entry.LinksModTime = linksModTime(dirPath)
+	if l, err := ReadLinks(dirPath); err == nil && len(l.Links) > 0 {
+		entry.Links = l.Links
 	}
 
 	ents, err := os.ReadDir(dirPath)
@@ -178,4 +207,13 @@ func dirBytes(dir string) int64 {
 		return nil
 	})
 	return total
+}
+
+// linksModTime は dir/links.json の mtime を返す。無ければゼロ値 (statusModTime と同じ)。
+func linksModTime(dir string) time.Time {
+	fi, err := os.Stat(filepath.Join(dir, LinksFileName))
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
 }

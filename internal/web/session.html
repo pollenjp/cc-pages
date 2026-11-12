@@ -28,4 +28,23 @@
     <span class="meta">{{.CreatedAt.Format "15:04"}}</span></li>
 {{end}}
 </ol>
+{{/* 会話に出たリンク (cc-pages link が links.json に残したもの)。リンクが無い会話には
+     節ごと出さない。tool の出力だけに出たリンクは最後に畳む。 */}}
+{{with .Links}}
+<section class="links">
+<h2>リンク ({{.Total}})</h2>
+{{range .Groups}}{{template "linkgroup" .}}{{end}}
+{{if .Tool}}<details>
+<summary>tool の出力だけに出たリンク ({{.ToolCount}})</summary>
+{{range .Tool}}{{template "linkgroup" .}}{{end}}
+</details>{{end}}
+</section>
+{{end}}
+{{end}}
+
+{{define "linkgroup"}}
+<h3>{{.Name}}</h3>
+<ul>
+{{range .Rows}}  <li>{{if .Href}}<a href="{{.Href}}"{{if .External}} rel="noopener noreferrer"{{end}} title="{{.Title}}">{{.Label}}</a>{{else}}<span>{{.Label}}</span>{{end}}<span class="desc">{{.Note}}</span><span class="time">{{.Time}}</span></li>
+{{end}}</ul>
 {{end}}

@@ -40,7 +40,7 @@ func fixture(t *testing.T) (*index.Index, http.Handler, *int) {
 	}, nil)
 
 	calls := 0
-	s := New(config.Config{Addr: "127.0.0.1:7777", Root: "/root"}, ix, func() { calls++ })
+	s := New(config.Config{Addr: "127.0.0.1:7777", Root: "/root"}, ix, func() { calls++ }, nil)
 	return ix, s.Handler(), &calls
 }
 
@@ -104,7 +104,7 @@ func TestListFiltersByQuery(t *testing.T) {
 func TestListEmptyState(t *testing.T) {
 	ix := index.New()
 	ix.Replace(map[string]store.SessionEntry{}, nil)
-	s := New(config.Config{Addr: "127.0.0.1:7777"}, ix, func() {})
+	s := New(config.Config{Addr: "127.0.0.1:7777"}, ix, func() {}, nil)
 	body := get(t, s.Handler(), "/").Body.String()
 	if !strings.Contains(body, "まだページがありません") {
 		t.Errorf("空状態が出ていない")
@@ -273,7 +273,7 @@ func TestDisplayedTimesShareOneZone(t *testing.T) {
 		},
 	}, map[string]transcript.Meta{"sa": {SessionID: "sa", LastSeen: instant}})
 
-	s := New(config.Config{Addr: "127.0.0.1:7777", Root: "/root"}, ix, func() {})
+	s := New(config.Config{Addr: "127.0.0.1:7777", Root: "/root"}, ix, func() {}, nil)
 	body := get(t, s.Handler(), "/p/20260829-aaaa/").Body.String()
 
 	// 出るのはヘッダの "2006-01-02 15:04" とページ行の "15:04" の 2 つだけ。
@@ -306,5 +306,51 @@ func TestListSearchMissHasOwnMessage(t *testing.T) {
 	}
 	if !strings.Contains(body, "zzz-nomatch") {
 		t.Errorf("何で絞り込んだのかが出ていない: %s", body)
+	}
+}
+
+// touchRecorder は全体の refresh と会話ごとの refresh の呼ばれ方を記録するハンドラを返す。
+func touchRecorder(t *testing.T) (http.Handler, *int, *[]string) {
+	t.Helper()
+	full := 0
+	var dirs []string
+	h := New(config.Config{Addr: "127.0.0.1:7777", Root: "/root"}, index.New(),
+		func() { full++ }, func(d string) { dirs = append(dirs, d) }).Handler()
+	return h, &full, &dirs
+}
+
+// TestTouchSessionCallsOnlySessionRefresh は cc-pages link からの知らせが、その会話だけを
+// 読み直させ、全体の走査 (RefreshAll) を走らせないことを確かめる。
+func TestTouchSessionCallsOnlySessionRefresh(t *testing.T) {
+	h, full, dirs := touchRecorder(t)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/_/touch/20260829-aaaa", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	if len(*dirs) != 1 || (*dirs)[0] != "20260829-aaaa" {
+		t.Errorf("会話ごとの refresh = %q, want [20260829-aaaa]", *dirs)
+	}
+	if *full != 0 {
+		t.Errorf("全体の refresh が %d 回走った", *full)
+	}
+}
+
+func TestTouchSessionRejectsBadName(t *testing.T) {
+	h, full, dirs := touchRecorder(t)
+	for _, path := range []string{"/_/touch/a.b", "/_/touch/..", "/_/touch/%2e%2e", "/_/touch/a%2Fb"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		if rec.Code == http.StatusNoContent {
+			t.Errorf("%s が通った", path)
+		}
+	}
+	if len(*dirs) != 0 || *full != 0 {
+		t.Errorf("不正な名前で refresh が呼ばれた: 会話ごと %q / 全体 %d", *dirs, *full)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/_/touch/a.b", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("/_/touch/a.b の status = %d, want 404", rec.Code)
 	}
 }
